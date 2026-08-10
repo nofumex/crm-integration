@@ -3,22 +3,22 @@ import type { NormalizedMessage } from "../domain/messages.js";
 import { InMemoryAdapterRegistry,type MessengerAdapter } from "../adapters/messenger-adapter.js";
 import { TelegramAdapter } from "../adapters/telegram-adapter.js";
 import { WhatsAppAdapter } from "../adapters/whatsapp-adapter.js";
-import { MaxPersonalAdapter,type MaxPersonalClientFactory } from "../adapters/max-personal-adapter.js";
 import type { SecretStore } from "../security/secret-store.js";
 import type { JobQueue } from "../queue/job-queue.js";
 import type { MediaStore } from "../media/media-store.js";
 
 type TelegramSecret={apiId:number;apiHash:string;session:string};
 type WhatsAppSecret={accessToken:string;phoneNumberId:string;graphVersion:string;appSecret:string};
-type MaxSecret={session:string};
+
+export class MaxPersonalUnavailableError extends Error{constructor(){super("MAX Personal has no public, documented first-party linked-device API/SDK; runtime activation is refused");this.name="MaxPersonalUnavailableError";}}
 
 export class AdapterFactory {
- constructor(private readonly secrets:SecretStore,private readonly queue:JobQueue,private readonly mediaStore?:MediaStore,private readonly maxMediaBytes=25*1024*1024,private readonly maxPersonalClientFactory?:MaxPersonalClientFactory){}
+ constructor(private readonly secrets:SecretStore,private readonly queue:JobQueue,private readonly mediaStore?:MediaStore,private readonly maxMediaBytes=25*1024*1024){}
  async create(account:MessengerAccount):Promise<MessengerAdapter>{
   let adapter:MessengerAdapter;
   if(account.messenger==="telegram"){const s=await this.required<TelegramSecret>(account.credentialRef);adapter=new TelegramAdapter({accountId:account.id,apiId:Number(s.apiId),apiHash:s.apiHash,session:s.session,mediaStore:this.mediaStore,maxMediaBytes:this.maxMediaBytes});}
   else if(account.messenger==="whatsapp"){const s=await this.required<WhatsAppSecret>(account.credentialRef);adapter=new WhatsAppAdapter({accountId:account.id,accessToken:s.accessToken,phoneNumberId:s.phoneNumberId,graphVersion:s.graphVersion,appSecret:s.appSecret,mediaStore:this.mediaStore,maxMediaBytes:this.maxMediaBytes});}
-  else {const s=await this.required<MaxSecret>(account.credentialRef);adapter=new MaxPersonalAdapter({accountId:account.id,session:s.session,client:this.maxPersonalClientFactory?.(account.id)});}
+  else throw new MaxPersonalUnavailableError();
   adapter.onInbound(message=>this.enqueueInbound(message));
   adapter.onStatus((accountId,id,status,occurredAt)=>this.queue.enqueue({kind:"messenger.status",partitionKey:`${account.messenger}:${accountId}:${id}`,dedupeKey:`${accountId}:${id}:${status}:${occurredAt.getTime()}`,payload:{messenger:account.messenger,accountId,id,status,occurredAt:occurredAt.toISOString()}}).then(()=>undefined));
   return adapter;

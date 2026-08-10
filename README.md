@@ -1,6 +1,6 @@
 # amoCRM Messenger Bridge
 
-TypeScript service integrating amoCRM Chats API with Telegram user accounts (MTProto), WhatsApp Business Cloud API and an explicit MAX Personal partner-access boundary. MAX Bot API is not part of the product.
+TypeScript service integrating amoCRM Chats API with Telegram user accounts (MTProto) and WhatsApp Business Cloud API. MAX Bot API is not part of the product; MAX Personal activation is fail-closed until MAX publishes or grants a documented first-party linked-device API/SDK.
 
 The checked-in implementation is deployable, but it is not labelled production-ready until real round-trip tests are completed on separate test accounts. Personal MAX is intentionally unsupported because no public official API exists.
 

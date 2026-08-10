@@ -8,13 +8,14 @@ import type{TelegramOnboardingService}from"../runtime/telegram-onboarding.js";
 import type{AccountManagementService}from"../runtime/account-management.js";
 import type{AmoChatsLifecycle}from"../amocrm/lifecycle.js";
 import type{MappingStore}from"../storage/mapping-store.js";
+import type{DeliveryReconciliationStore}from"../storage/delivery-reconciliation.js";
 declare module"fastify"{interface FastifyRequest{rawBody?:string}}
 interface Options{
  queue:JobQueue;amoChannelSecret:string;whatsappVerifyToken?:string;
  verifyWhatsApp?:(raw:string,body:any,signature?:string)=>Promise<{valid:boolean;accountId?:string}>;
  readiness?:()=>Promise<{ready:boolean;detail?:unknown}>;onboarding?:TelegramOnboardingService;
  accountManagement?:AccountManagementService;lifecycle?:AmoChatsLifecycle;adminToken?:string;
- mappings?:MappingStore;
+ mappings?:MappingStore;deliveryReconciliation?:DeliveryReconciliationStore;
  logger?:any;bodyLimit?:number;rateLimitMax?:number;
 }
 export function buildWebhookServer(o:Options):FastifyInstance{
@@ -30,7 +31,7 @@ export function buildWebhookServer(o:Options):FastifyInstance{
  if(o.accountManagement)app.post("/admin/accounts",{preHandler:admin(o.adminToken)},async(req,reply)=>reply.code(201).send(await o.accountManagement!.create(req.body as any)));
  app.get("/admin/jobs/dead",{preHandler:admin(o.adminToken)},async req=>o.queue.deadLetters(Math.min(500,Number((req.query as any)?.limit??100))));
  app.post("/admin/jobs/:id/requeue",{preHandler:admin(o.adminToken)},async(req,reply)=>{const ok=await o.queue.requeueDead(Number((req.params as any).id));return ok?reply.send({ok:true}):reply.code(404).send({error:"dead job not found"});});
- if(o.mappings){app.get("/admin/deliveries/unknown",{preHandler:admin(o.adminToken)},async req=>(await o.mappings!.listDeliveryUnknown(Number((req.query as any)?.limit??100))).map(x=>({amoMessageId:x.amoMessageId,messenger:x.messenger,accountId:x.messengerAccountId,occurredAt:x.occurredAt})));app.post("/admin/deliveries/:amoMessageId/reconcile",{preHandler:admin(o.adminToken)},async(req,reply)=>{const id=String((req.params as any).amoMessageId);const body=req.body as any;if(body?.accepted===false){if(!Number.isInteger(Number(body.jobId)))return reply.code(400).send({error:"jobId is required to explicitly requeue a confirmed-not-accepted delivery"});const cleared=await o.mappings!.clearDeliveryUnknown(id);if(!cleared)return reply.code(404).send({error:"unknown delivery not found"});const requeued=await o.queue.requeueDead(Number(body.jobId),true);return requeued?{ok:true,requeued:true}:reply.code(409).send({error:"delivery cleared but dead job could not be requeued"});}if(!body?.providerMessageId||!["queued","sent","delivered","read"].includes(body?.status))return reply.code(400).send({error:"providerMessageId and final status are required"});const ok=await o.mappings!.reconcileDeliveryUnknown(id,String(body.providerMessageId),body.status);return ok?{ok:true}:reply.code(404).send({error:"unknown delivery not found"});});}
+ if(o.mappings){app.get("/admin/deliveries/unknown",{preHandler:admin(o.adminToken)},async req=>(await o.mappings!.listDeliveryUnknown(Number((req.query as any)?.limit??100))).map(x=>({amoMessageId:x.amoMessageId,messenger:x.messenger,accountId:x.messengerAccountId,occurredAt:x.occurredAt})));app.post("/admin/deliveries/:amoMessageId/reconcile",{preHandler:admin(o.adminToken)},async(req,reply)=>{const id=String((req.params as any).amoMessageId);const body=req.body as any;if(body?.accepted===false){if(!Number.isInteger(Number(body.jobId)))return reply.code(400).send({error:"jobId is required to explicitly requeue a confirmed-not-accepted delivery"});if(!o.deliveryReconciliation)return reply.code(503).send({error:"atomic delivery reconciliation is unavailable"});const requeued=await o.deliveryReconciliation.confirmNotAccepted(id,Number(body.jobId));return requeued?{ok:true,requeued:true}:reply.code(409).send({error:"unknown delivery and dead job did not match"});}if(!body?.providerMessageId||!["queued","sent","delivered","read"].includes(body?.status))return reply.code(400).send({error:"providerMessageId and final status are required"});const ok=await o.mappings!.reconcileDeliveryUnknown(id,String(body.providerMessageId),body.status);return ok?{ok:true}:reply.code(404).send({error:"unknown delivery not found"});});}
  if(o.lifecycle){app.post("/admin/accounts/:accountId/amocrm/connect",{preHandler:admin(o.adminToken)},async req=>({scopeId:await o.lifecycle!.connectAccount(String((req.params as any).accountId),(req.body as any)?.title)}));app.post("/admin/accounts/:accountId/amocrm/source",{preHandler:admin(o.adminToken)},async req=>{await o.lifecycle!.ensureSource(String((req.params as any).accountId),(req.body as any)?.pipelineId);return{ok:true};});}
  return app;
 }
