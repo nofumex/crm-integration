@@ -18,3 +18,6 @@ export class UnsupportedOperationError extends Error {
     this.name = "UnsupportedOperationError";
   }
 }
+
+/** Provider may have accepted a non-idempotent send; automatic retry is unsafe. */
+export class DeliveryUnknownError extends Error {constructor(message="Provider delivery result is unknown",options?:ErrorOptions){super(message,options);this.name="DeliveryUnknownError";}}

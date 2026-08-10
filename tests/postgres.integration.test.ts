@@ -8,7 +8,7 @@ import { EncryptedPostgresSecretStore } from "../src/security/secret-store.js";
 const url = process.env.TEST_DATABASE_URL;
 describe.skipIf(!url)("PostgreSQL production storage", () => {
   const pool = new Pool({ connectionString: url });
-  beforeAll(async () => { await migrate(pool); await pool.query("TRUNCATE jobs, message_mappings, conversation_mappings, messenger_accounts, secrets CASCADE"); });
+  beforeAll(async () => { await migrate(pool);expect(Number((await pool.query("SELECT max(version) version FROM schema_migrations")).rows[0].version)).toBe(2);await pool.query("TRUNCATE jobs, message_mappings, conversation_mappings, messenger_accounts, secrets CASCADE"); });
   afterAll(async () => { await pool.end(); });
 
   it("persists encrypted secrets and isolated accounts", async () => {
@@ -38,6 +38,8 @@ describe.skipIf(!url)("PostgreSQL production storage", () => {
     const recovered = await queue.claim("restart", 1000);
     expect(recovered?.dedupeKey).toBe("event-1");
     await queue.complete(recovered!.id, "restart");
-    expect((await queue.claim("restart", 1000))?.dedupeKey).toBe("event-2");
+    const second=await queue.claim("restart", 1000);expect(second?.dedupeKey).toBe("event-2");await queue.complete(second!.id,"restart");
   });
+
+  it("scrubs completed payloads and deletes expired jobs",async()=>{const queue=new PostgresJobQueue(pool);const job=await queue.enqueue({kind:"messenger.inbound",partitionKey:"retention",dedupeKey:"retention",payload:{text:"must not live forever"}});const claimed=await queue.claim("retention-worker",1000);await queue.complete(claimed!.id,"retention-worker");await pool.query("UPDATE jobs SET updated_at=now()-interval '40 days' WHERE id=$1",[job.id]);const cutoff=new Date(Date.now()-30*86400000);const result=await queue.cleanup({payloadBefore:cutoff,completedBefore:cutoff,deadBefore:new Date(Date.now()-90*86400000)});expect(result.payloadsPruned).toBe(1);expect(result.jobsDeleted).toBe(1);});
 });

@@ -1,6 +1,6 @@
 export type MessengerKind = "telegram" | "whatsapp" | "max";
 export type MessageDirection = "inbound" | "outbound";
-export type MessageStatus = "queued" | "sent" | "delivered" | "read" | "failed";
+export type MessageStatus = "queued" | "sent" | "delivered" | "read" | "failed" | "delivery_unknown";
 export type AttachmentKind = "image" | "video" | "audio" | "voice" | "file" | "sticker" | "unknown";
 
 export interface NormalizedAttachment {

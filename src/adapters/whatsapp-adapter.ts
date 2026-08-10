@@ -96,10 +96,10 @@ export class WhatsAppAdapter implements MessengerAdapter {
         const attachment: NormalizedAttachment = { id: item[type].id, kind: type === "document" ? "file" : type, mimeType: item[type].mime_type, fileName: item[type].filename, caption: item[type].caption };
         if (this.options.mediaStore && attachment.id) {
           const version = this.options.graphVersion;
-          const metaResponse = await this.fetcher(`https://graph.facebook.com/${version}/${attachment.id}`, { headers: { Authorization: `Bearer ${this.options.accessToken}` } });
+          const metaResponse = await this.fetcher(`https://graph.facebook.com/${version}/${attachment.id}`, { headers: { Authorization: `Bearer ${this.options.accessToken}` },signal:AbortSignal.timeout(this.options.timeoutMs??15_000) });
           if (!metaResponse.ok) throw httpFailure(metaResponse,"GET",`https://graph.facebook.com/${version}/${attachment.id}`);
           const meta = await metaResponse.json() as { url: string; mime_type?: string; file_size?: number };
-          const mediaResponse = await this.fetcher(meta.url, { headers: { Authorization: `Bearer ${this.options.accessToken}` } });
+          const mediaResponse = await this.fetcher(meta.url, { headers: { Authorization: `Bearer ${this.options.accessToken}` },signal:AbortSignal.timeout(this.options.timeoutMs??15_000) });
           if (!mediaResponse.ok) throw httpFailure(mediaResponse,"GET",meta.url);
           const published = await this.options.mediaStore.put({ data: await readBounded(mediaResponse,this.options.maxMediaBytes??25*1024*1024), kind: attachment.kind, mimeType: meta.mime_type ?? attachment.mimeType, fileName: attachment.fileName, sourceId: attachment.id });
           attachment.url = published.url; attachment.size = published.size;

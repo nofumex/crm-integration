@@ -1,12 +1,12 @@
 # amoCRM Messenger Bridge
 
-TypeScript service integrating amoCRM Chats API with Telegram user accounts (MTProto), WhatsApp Business Cloud API and the official MAX Bot API.
+TypeScript service integrating amoCRM Chats API with Telegram user accounts (MTProto), WhatsApp Business Cloud API and an explicit MAX Personal partner-access boundary. MAX Bot API is not part of the product.
 
 The checked-in implementation is deployable, but it is not labelled production-ready until real round-trip tests are completed on separate test accounts. Personal MAX is intentionally unsupported because no public official API exists.
 
 ## Absolute amoCRM safety boundary
 
-`AMOCRM_READ_ONLY` defaults to `true`. Both amoCRM clients reject every non-GET method before calling network transport. Startup additionally rejects write mode unless `AMOCRM_ENVIRONMENT=test`. Never point a write-enabled deployment at the current production tenant.
+`AMOCRM_READ_ONLY` defaults to `true`. Both amoCRM clients reject every non-GET method before calling network transport. Write mode additionally requires `AMOCRM_WRITES_ENABLED=true`, an expected account ID and expected subdomain; startup verifies both through a GET before enabling writes. Never enable this gate for the current production tenant.
 
 ```powershell
 npm ci

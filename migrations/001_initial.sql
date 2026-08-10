@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS message_mappings (
   amo_message_id text,
   amo_conversation_id text,
   direction text NOT NULL CHECK (direction IN ('inbound','outbound')),
-  status text NOT NULL CHECK (status IN ('queued','sent','delivered','read','failed')),
+  status text NOT NULL CHECK (status IN ('queued','sent','delivered','read','failed','delivery_unknown')),
   status_at timestamptz NOT NULL,
   occurred_at timestamptz NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   dedupe_key text NOT NULL,
   payload jsonb NOT NULL,
   payload_hash text NOT NULL,
+  payload_pruned_at timestamptz,
   state text NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','processing','completed','dead')),
   attempts integer NOT NULL DEFAULT 0,
   max_attempts integer NOT NULL DEFAULT 12,
@@ -91,5 +92,6 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 CREATE INDEX IF NOT EXISTS jobs_claim_idx ON jobs(state, available_at, id);
 CREATE INDEX IF NOT EXISTS jobs_partition_idx ON jobs(partition_key, id);
+CREATE INDEX IF NOT EXISTS jobs_retention_idx ON jobs(state, updated_at);
 
 INSERT INTO schema_migrations(version) VALUES (1) ON CONFLICT DO NOTHING;

@@ -16,6 +16,7 @@ export interface TelegramOptions {
   /** Test seam; production creates a real MTProto client from the encrypted session. */
   client?: TelegramClient;
   maxMediaBytes?: number;
+  timeoutMs?:number;
 }
 
 export interface TelegramAuthorizationPrompts {
@@ -46,33 +47,33 @@ export class TelegramAdapter implements MessengerAdapter {
   onStatus(handler: StatusHandler): void { this.status = handler; }
 
   async authorize(prompts: TelegramAuthorizationPrompts): Promise<string> {
-    await this.client.start({ ...prompts, onError: prompts.onError ?? (() => undefined) });
+    await withTimeout(this.client.start({ ...prompts, onError: prompts.onError ?? (() => undefined) }),5*60_000);
     this.installHandler();
     return String(this.client.session.save());
   }
 
   async connect(accountId: string): Promise<void> {
     if (accountId !== this.options.accountId) throw new Error("Telegram adapter/account mismatch");
-    await this.client.connect();
-    if (!(await this.client.isUserAuthorized())) throw new Error("Telegram session is not authorized; complete interactive authorization first");
+    await withTimeout(this.client.connect(),this.timeout());
+    if (!(await withTimeout(this.client.isUserAuthorized(),this.timeout()))) throw new Error("Telegram session is not authorized; complete interactive authorization first");
     this.installHandler();
   }
 
-  async disconnect(): Promise<void> { await this.client.disconnect(); }
+  async disconnect(): Promise<void> { await withTimeout(this.client.disconnect(),this.timeout()); }
   async health(): Promise<{ connected: boolean; detail?: string }> {
     return { connected: Boolean(this.client.connected), detail: this.client.connected ? undefined : "disconnected" };
   }
 
   async resolveRecipient(identifier:{phone?:string;username?:string}):Promise<{providerRecipientId:string;providerConversationId:string}>{
     const value=identifier.username??identifier.phone;if(!value)throw new Error("Telegram recipient phone or username is required");
-    const entity:any=await this.client.getEntity(value);const id=String(entity.id);return{providerRecipientId:id,providerConversationId:id};
+    const entity:any=await withTimeout(this.client.getEntity(value),this.timeout());const id=String(entity.id);return{providerRecipientId:id,providerConversationId:id};
   }
 
   async send(command: SendMessageCommand): Promise<SendResult> {
     const attachment = command.attachments?.[0];
-    const result = attachment?.url
-      ? await this.client.sendFile(command.conversationId, { file: attachment.url, caption: command.text, ...(command.replyToId ? { replyTo: Number(command.replyToId) } : {}) })
-      : await this.client.sendMessage(command.conversationId, { message: command.text ?? "", ...(command.replyToId ? { replyTo: Number(command.replyToId) } : {}) });
+    const result = await withTimeout(attachment?.url
+      ? this.client.sendFile(command.conversationId, { file: attachment.url, caption: command.text, ...(command.replyToId ? { replyTo: Number(command.replyToId) } : {}) })
+      : this.client.sendMessage(command.conversationId, { message: command.text ?? "", ...(command.replyToId ? { replyTo: Number(command.replyToId) } : {}) }),this.timeout());
     return { externalMessageId: String((result as any).id), status: "sent", occurredAt: new Date(Number((result as any).date) * 1000) };
   }
 
@@ -86,7 +87,7 @@ export class TelegramAdapter implements MessengerAdapter {
       const attachments: NormalizedAttachment[] = msg.media ? [{ kind: inferTelegramMediaKind(msg.media), id: String(msg.id) }] : [];
       if (msg.media && this.options.mediaStore) {
         const declaredSize=Number(msg.media?.document?.size??0);if(declaredSize>(this.options.maxMediaBytes??25*1024*1024))throw new Error("Telegram media exceeds size limit");
-        const downloaded = await this.client.downloadMedia(msg.media, {});
+        const downloaded = await withTimeout(this.client.downloadMedia(msg.media, {}),this.timeout());
         if (downloaded) {
           const data = typeof downloaded === "string" ? await readFile(downloaded) : Buffer.from(downloaded);
           const published = await this.options.mediaStore.put({ data, kind: attachments[0]!.kind, sourceId: `${chatId}:${msg.id}` });
@@ -104,6 +105,7 @@ export class TelegramAdapter implements MessengerAdapter {
     }, new NewMessage({ incoming: true }));
     this.handlerInstalled = true;
   }
+  private timeout(){return this.options.timeoutMs??15_000;}
 }
 
 function inferTelegramMediaKind(media: any): NormalizedAttachment["kind"] {
@@ -115,3 +117,4 @@ function inferTelegramMediaKind(media: any): NormalizedAttachment["kind"] {
   if (/Sticker/i.test(name)) return "sticker";
   return "file";
 }
+function withTimeout<T>(promise:Promise<T>,ms:number):Promise<T>{let timer:NodeJS.Timeout|undefined;return Promise.race([promise,new Promise<T>((_,reject)=>{timer=setTimeout(()=>reject(new DOMException("Operation timed out","TimeoutError")),ms);timer.unref?.();})]).finally(()=>{if(timer)clearTimeout(timer);});}

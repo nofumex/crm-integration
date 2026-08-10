@@ -11,8 +11,8 @@ amoCRM REST API (OAuth)         amoCRM Chats API (HMAC-SHA1)
                           |
                    Adapter registry
                  /          |          \
-        Telegram MTProto  WhatsApp     MAX Bot API
-                         Cloud API   (personal BLOCKED)
+        Telegram MTProto  WhatsApp    MAX Personal partner client
+                         Cloud API   (access currently BLOCKED)
 ```
 
 ## Границы и multi-account
@@ -35,14 +35,14 @@ REST и Chats API — разные клиенты и разные credentials. `
 
 Webhook amoCRM проверяется HMAC-SHA1 `X-Signature` по raw body и `channel_secret`. Отдельного webhook secret нет. Partition — scope + amo conversation; dedupe key — scope + amo message ID.
 
-Для существующего mapping adapter получает только сохранённые `provider_recipient_id` и `provider_conversation_id`. `receiver.id` amoCRM никогда не используется как messenger ID. При write-first account выбирается по `(scope_id, source.external_id)`, затем adapter официальным API резолвит телефон/username и сохраняет реальные provider IDs до отправки. Telegram может резолвить username/phone, WhatsApp использует E.164 phone; MAX Bot не может начать диалог до `/start` и поэтому write-first для MAX заблокирован.
+Для существующего mapping adapter получает только сохранённые `provider_recipient_id` и `provider_conversation_id`. `receiver.id` amoCRM никогда не используется как messenger ID. При write-first account выбирается по `(scope_id, source.external_id)`, затем adapter официальным API резолвит телефон/username и сохраняет реальные provider IDs до отправки. MAX Personal станет доступен только через документированный partner client.
 
 WhatsApp free-form разрешается только внутри 24-hour window от `last_inbound_at`; вне окна требуется account-specific mapping одобренного template. Status webhooks обновляют mapping монотонно и передают delivered/read/failed в Chats API.
 
 ## Надёжность
 
 - PostgreSQL — единственный production storage для accounts, encrypted secrets, conversation/message mappings и jobs.
-- Семантика delivery — at-least-once. Provider APIs не дают общей транзакции с нашей БД, поэтому остаётся неизбежное ambiguous-result окно, если процесс погиб после принятия сообщения provider, но до сохранения ответа. Стабильные provider/amo IDs и reconciliation уменьшают риск; обещать exactly-once нельзя.
+- Non-idempotent send при timeout/network/5xx не повторяется автоматически: сообщение получает `delivery_unknown`, job уходит в dead-letter. Оператор проверяет provider и фиксирует provider message ID либо подтверждает, что отправки не было, через reconciliation API. Только после второго варианта job можно requeue.
 - Retry выполняется для 429/408/5xx и временных network/dependency ошибок, учитывает `Retry-After`, exponential backoff и jitter. Постоянные HTTP 4xx идут в dead-letter.
 - Ordering обеспечивается partition key; разные диалоги обрабатываются параллельно.
 - Supervisor поддерживает отдельное состояние/reconnect backoff каждого account. Graceful shutdown прекращает claim, ждёт workers, закрывает adapters, HTTP и pool.
@@ -50,9 +50,11 @@ WhatsApp free-form разрешается только внутри 24-hour wind
 
 ## Безопасность
 
-`AMOCRM_READ_ONLY` по умолчанию `true`; общий transport guard блокирует любой не-GET до вызова сети. Кроме того, startup запрещает `AMOCRM_READ_ONLY=false`, пока `AMOCRM_ENVIRONMENT` не равен `test`. Production `.env` не меняется.
+`AMOCRM_READ_ONLY` по умолчанию `true`; общий transport guard блокирует любой не-GET до вызова сети. Future write deployment требует отдельного `AMOCRM_WRITES_ENABLED=true` и точного совпадения ожидаемых account ID/subdomain по startup GET. Production `.env` не меняется.
 
 Sessions/tokens/app secrets хранятся через `SecretStore`; PostgreSQL implementation использует AES-256-GCM envelope encryption, а master key приходит извне. Request logging webhook/admin bodies отключён; logger redacts authorization/token/secret/session/password/code. Admin onboarding защищён bearer token. TLS termination и сетевые egress/ingress policies остаются обязанностью deployment perimeter.
+
+`MEDIA_ALLOWED_HOSTS` содержит только точные доверенные origin suffixes: amojo для amoCRM и документированные Meta media hosts. Redirect запрещён, каждый DNS answer проверяется на private/link-local address. Новый CDN host сначала подтверждается официальной документацией или test E2E и только затем явно добавляется; wildcard/пустой allowlist в production запрещены. MAX Personal hosts нельзя добавлять до получения partner-документации.
 
 ## Таблицы
 

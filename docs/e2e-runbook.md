@@ -22,15 +22,15 @@ These steps must be executed only against a separate amoCRM test account. The cu
 
 - Telegram: `api_id`, `api_hash`, a dedicated test phone/account, login code and optional 2FA password. Complete `/admin/telegram/onboarding`; verify reconnect after service restart and after temporary network loss.
 - WhatsApp: Meta test/business portfolio, WABA, phone-number ID, permanent/system-user access token, app secret, webhook verify token, current Graph version and at least one approved template. Configure Meta webhook fields for messages/statuses.
-- MAX: moderated test bot token and an account-specific webhook secret. Set `config.webhookUrl` to `/webhooks/max/{accountId}`; the adapter creates the official subscription. Personal MAX is out of scope.
+- MAX Personal: письменное одобрение MAX и документированный linked-device Partner API/SDK, sandbox/base URL, client credentials, QR/session/revocation contract и media limits. До получения доступа E2E заблокирован; Bot API не использовать.
 
 ## 4. Required real scenarios
 
 For every supported channel: inbound/outbound text, duplicate webhook, attachment types, restart during processing, temporary 429/5xx, reconnect and multiple accounts. Also verify exact contact phone matching, linking to an existing contact/deal, new-chat behaviour, source selection, manager write-first, replies, delivery/read/failure statuses, and message order.
 
-WhatsApp additionally requires free-form inside the 24-hour window and approved template outside it. Telegram requires code login plus 2FA and revoked-session recovery. MAX requires bot `/start`, inbound reply, upload/send media and webhook resubscription.
+WhatsApp additionally requires free-form inside the 24-hour window and approved template outside it. Telegram requires code login plus 2FA and revoked-session recovery. MAX Personal требует QR linked-device login, 2FA, session recovery, личные диалоги, media и multi-account через одобренный API.
 
-Inspect dead jobs through `GET /admin/jobs/dead`; after fixing the cause use `POST /admin/jobs/{id}/requeue`. Payloads are deliberately not returned by this endpoint.
+Inspect dead jobs through `GET /admin/jobs/dead`; after fixing an ordinary failure use `POST /admin/jobs/{id}/requeue`. `DeliveryUnknownError` is deliberately blocked from this generic requeue. First verify the provider: if accepted, record `providerMessageId` and status through `/admin/deliveries/{amoMessageId}/reconcile`; if confirmed not accepted, send `accepted:false` plus `jobId` to the same endpoint for an explicit one-time requeue. Payloads are deliberately not returned.
 
 ## 5. Promotion gate
 

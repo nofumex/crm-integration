@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Job, JobKind, JobQueue } from "./job-queue.js";
 import { HttpError } from "../http/http-error.js";
+import { DeliveryUnknownError } from "../core/errors.js";
 
 export type JobHandler = (job: Job) => Promise<void>;
 
@@ -12,6 +13,7 @@ export interface WorkerOptions {
   pollMs?: number;
   baseDelayMs?: number;
   maxDelayMs?: number;
+  infrastructureRetryMs?:number;
   random?: () => number;
   logger?: { info(data:unknown,message?:string):void; error(data:unknown,message?:string):void };
 }
@@ -36,13 +38,14 @@ export class DurableWorker {
 
   async start(signal: AbortSignal): Promise<void> {
     if(this.running)throw new Error("Worker already started");this.running=true;
-    await this.options.queue.recoverStale(this.leaseMs);
-    try { while(!signal.aborted){const handled=await this.pollOnce();if(!handled)await abortableDelay(this.options.pollMs??250,signal);} }
+    let infrastructureFailures=0,recovered=false;
+    try { while(!signal.aborted){try{if(!recovered){await this.options.queue.recoverStale(this.leaseMs);recovered=true;}const handled=await this.pollOnce();infrastructureFailures=0;if(!handled)await abortableDelay(this.options.pollMs??250,signal);}catch(error){infrastructureFailures++;recovered=false;this.options.logger?.error({workerId:this.workerId,infrastructureFailures,error:safeError(error)},"worker infrastructure failure");const base=this.options.infrastructureRetryMs??1000;await abortableDelay(Math.min(30000,base*2**Math.min(infrastructureFailures-1,5)),signal);}} }
     finally { this.running=false; }
   }
 }
 
 export function retryDecision(error:unknown,attempt:number,options:Pick<WorkerOptions,"baseDelayMs"|"maxDelayMs"|"random">):{retry:boolean;delayMs:number}{
+  if(error instanceof DeliveryUnknownError)return{retry:false,delayMs:0};
   if(error instanceof HttpError && !error.retryable)return{retry:false,delayMs:0};
   const retryAfter=error instanceof HttpError ? error.retryAfterMs : undefined;
   if(!(error instanceof HttpError)&&!isTransientDependencyError(error))return{retry:false,delayMs:0};

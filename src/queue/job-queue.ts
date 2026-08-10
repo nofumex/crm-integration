@@ -26,5 +26,6 @@ export interface JobQueue {
   recoverStale(leaseMs: number): Promise<number>;
   counts(): Promise<Record<JobState, number>>;
   deadLetters(limit: number): Promise<Array<{id:number;kind:JobKind;partitionKey:string;attempts:number;lastError?:string}>>;
-  requeueDead(id:number):Promise<boolean>;
+  requeueDead(id:number,allowDeliveryUnknown?:boolean):Promise<boolean>;
+  cleanup(retention:{payloadBefore:Date;completedBefore:Date;deadBefore:Date}):Promise<{payloadsPruned:number;jobsDeleted:number}>;
 }

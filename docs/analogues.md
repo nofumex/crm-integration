@@ -46,7 +46,7 @@
 
 ## Другие релевантные решения и выводы
 
-Официальная карточка amoCRM для MAX прямо описывает обращения **через чат-бота MAX** и подключение профиля организации на партнёрской платформе. Это наиболее надёжно подтверждённый допустимый MAX-flow. Для WhatsApp зрелые агрегаторы обычно явно разделяют QR/linked-device и WABA/Cloud API; для production следует выбирать второй. Для Telegram Personal нормальный flow — полноценная MTProto client session, а не Bot API.
+Официальная карточка amoCRM для MAX описывает чат-бота, но это другой продукт и он исключён из текущего Definition of Done. Wazzup (`transport=max`) и ChatApp отдельно подтверждают personal linked-device QR; Wazzup отличает его от `maxbot`. Ни один из них не публикует MAX-side контракт. Для WhatsApp зрелые агрегаторы разделяют QR/linked-device и WABA/Cloud API; здесь используется второй. Для Telegram Personal используется полноценная MTProto client session.
 
 Источник: [amoCRM: MAX, неразобранное и источники](https://www.amocrm.ru/support/incoming_leads/max).
 
@@ -56,6 +56,6 @@
 - Отдельные состояния `connecting / connected / reconnect_required / disabled / error`.
 - Выбор source/account для менеджера и права доступа по сотрудникам.
 - Единый normalized message, но сохранение provider IDs без преобразования.
-- Отличать официальный WABA от WhatsApp linked-device и MAX Bot от неподтверждённого personal MAX.
+- MAX Bot полностью исключить; MAX Personal включать только после выдачи официального linked-device Partner API/SDK.
 - QR/code wizard не должен обещать канал, которого нет в официальном API.
 - Media group, delivery/read/error state, retry и idempotency должны быть backend-функциями, а не ответственностью виджета.

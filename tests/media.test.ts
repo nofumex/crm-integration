@@ -5,7 +5,7 @@ import { S3MediaStore } from "../src/media/s3-media-store.js";
 describe("safe media pipeline",()=>{
   it("rejects non-HTTPS, private IPs and oversized streaming bodies before storage",async()=>{
     const transport=vi.fn(async()=>new Response(new Uint8Array(20),{headers:{"content-type":"image/png"}}));
-    const downloader=new SafeMediaDownloader({maxBytes:10,timeoutMs:1000,transport});
+    const downloader=new SafeMediaDownloader({maxBytes:10,timeoutMs:1000,allowedHosts:["8.8.8.8","127.0.0.1"],transport});
     await expect(downloader.download("http://8.8.8.8/file")).rejects.toThrow("HTTPS");
     await expect(downloader.download("https://127.0.0.1/file")).rejects.toThrow("Private");
     await expect(downloader.download("https://8.8.8.8/file")).rejects.toThrow("size limit");

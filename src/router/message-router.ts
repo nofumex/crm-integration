@@ -5,6 +5,8 @@ import type { AccountRepository } from "../domain/accounts.js";
 import type { MessengerKind,NormalizedAttachment,NormalizedMessage,SendMessageCommand,MessageStatus } from "../domain/messages.js";
 import type { MappingStore,ConversationMapping } from "../storage/mapping-store.js";
 import type{MediaStore}from"../media/media-store.js";
+import{DeliveryUnknownError}from"../core/errors.js";
+import{HttpError}from"../http/http-error.js";
 
 interface Options {store:MappingStore;accounts:AccountRepository;adapters:AdapterRegistry;chats:AmoCrmChatsClient;contactResolver?:ContactChatResolver;mediaStore?:MediaStore;now?:()=>Date;}
 
@@ -24,7 +26,7 @@ export class MessageRouter {
  }
 
  async routeAmoOutbound(hook:any,scopeId:string):Promise<void>{
-  const data=hook?.message??hook;const amoMessageId=String(data?.message?.id??"");const amoConversationId=String(data?.conversation?.id??"");if(!amoMessageId||!amoConversationId)throw new Error("Invalid amoCRM Chats v2 message webhook");
+  const data=hook?.message??hook;const amoMessageId=String(data?.message?.id??"");const amoConversationId=String(data?.conversation?.id??"");if(!amoMessageId||!amoConversationId)throw new Error("Invalid amoCRM Chats v2 message webhook");const previous=await this.options.store.findMessageByAmoId(amoMessageId);if(previous){if(previous.status==="delivery_unknown")throw new DeliveryUnknownError("Outbound send requires provider reconciliation");return;}
   let mapping=await this.options.store.findConversationByAmoId(amoConversationId);
   if(!mapping&&data?.conversation?.client_id){const base=await this.resolveAccount(scopeId,data);mapping=await this.options.store.getConversation(base.messenger,base.id,String(data.conversation.client_id));if(mapping){mapping.amoConversationId=amoConversationId;await this.options.store.upsertConversation(mapping);}}
   if(!mapping){const account=await this.resolveAccount(scopeId,data);const adapter=this.requiredAdapter(account.messenger,account.id);const phone=normalizePhone(data?.receiver?.phone);const username=typeof data?.receiver?.username==="string"?data.receiver.username:undefined;if(!phone&&!username)throw new Error("Write-first webhook has no provider mapping and no receiver phone/username");const recipient=await adapter.resolveRecipient({phone,username});mapping={messenger:account.messenger,messengerAccountId:account.id,providerConversationId:recipient.providerConversationId,providerRecipientId:recipient.providerRecipientId,amoConversationId,amoScopeId:account.amoScopeId!,writeFirstState:"pending"};await this.options.store.upsertConversation(mapping);}
@@ -32,7 +34,7 @@ export class MessageRouter {
   const template=resolveTemplate(account.config,data?.message?.template);if(mapping.messenger==="whatsapp"&&!within24Hours(mapping.lastInboundAt,this.now())&&!template)throw new Error("WhatsApp message outside 24-hour window requires a configured approved template");
   let attachments=amoWebhookAttachments(data?.message);if(attachments.length){if(!this.options.mediaStore)throw new Error("Outbound media requires MediaStore");attachments=await Promise.all(attachments.map(async a=>({...a,...await this.options.mediaStore!.ingestRemote({url:a.url!,kind:a.kind,fileName:a.fileName,sourceId:`amo:${amoMessageId}`} )})));}
   const command:SendMessageCommand={accountId:account.id,conversationId:required(mapping.providerConversationId,"provider conversation"),recipientId:mapping.providerRecipientId,text:data?.message?.text,attachments,idempotencyKey:amoMessageId,template};
-  const result=await adapter.send(command);await this.options.store.saveMessage({messenger:mapping.messenger,messengerAccountId:account.id,messengerMessageId:result.externalMessageId,providerConversationId:command.conversationId,amoMessageId,amoConversationId,direction:"outbound",status:result.status,statusAt:result.occurredAt,occurredAt:result.occurredAt});
+  await this.options.store.saveMessage({messenger:mapping.messenger,messengerAccountId:account.id,messengerMessageId:`delivery-unknown:${amoMessageId}`,providerConversationId:command.conversationId,amoMessageId,amoConversationId,direction:"outbound",status:"delivery_unknown",statusAt:this.now(),occurredAt:this.now()});let result;try{result=await adapter.send(command);}catch(error){if(isAmbiguousSend(error))throw error instanceof DeliveryUnknownError?error:new DeliveryUnknownError("Provider may have accepted the outbound message",{cause:error});await this.options.store.clearDeliveryUnknown(amoMessageId);throw error;}const finalStatus=result.status==="queued"||result.status==="sent"||result.status==="delivered"||result.status==="read"?result.status:"sent";let recorded=false;try{recorded=await this.options.store.reconcileDeliveryUnknown(amoMessageId,result.externalMessageId,finalStatus);}catch(error){throw new DeliveryUnknownError("Provider accepted the message but result persistence is ambiguous",{cause:error});}if(!recorded)throw new DeliveryUnknownError("Provider accepted the message but its result was not durably recorded");
   if(result.status!=="sent"&&result.status!=="queued")await this.pushStatus(mapping.amoScopeId,amoMessageId,result.status);
  }
 
@@ -49,3 +51,4 @@ function within24Hours(at:Date|undefined,now:Date){return Boolean(at&&now.getTim
 function normalizePhone(v:unknown){if(typeof v!=="string")return undefined;const d=v.replace(/\D/g,"");return d||undefined;}
 function required<T>(v:T|undefined,name:string):T{if(v===undefined)throw new Error(`Missing ${name}`);return v;}
 function extension(mime?:string){return mime?.split("/")[1]?.replace(/[^a-z0-9]/gi,"")||"bin";}
+function isAmbiguousSend(error:unknown){if(error instanceof DeliveryUnknownError)return true;if(error instanceof HttpError)return error.status===408||error.status>=500;const e=error as any;return error instanceof TypeError||e?.name==="TimeoutError"||e?.name==="AbortError"||["ECONNRESET","ETIMEDOUT","UND_ERR_CONNECT_TIMEOUT","UND_ERR_SOCKET"].includes(String(e?.code??""));}

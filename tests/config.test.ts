@@ -8,6 +8,6 @@ const valid = {
 };
 describe("startup safety validation",()=>{
   it("defaults amoCRM to production/read-only",()=>{const c=loadConfig(valid as any);expect(c.AMOCRM_READ_ONLY).toBe(true);expect(c.AMOCRM_ENVIRONMENT).toBe("production");});
-  it("physically refuses write-enabled production configuration",()=>{expect(()=>loadConfig({...valid,AMOCRM_READ_ONLY:"false",AMOCRM_ENVIRONMENT:"production"} as any)).toThrow("amoCRM writes require");});
-  it("permits writes only when explicitly marked test",()=>{expect(loadConfig({...valid,AMOCRM_READ_ONLY:"false",AMOCRM_ENVIRONMENT:"test"} as any).AMOCRM_READ_ONLY).toBe(false);});
+  it("refuses write mode without explicit enable and expected target",()=>{expect(()=>loadConfig({...valid,AMOCRM_READ_ONLY:"false"} as any)).toThrow("WRITES_ENABLED");});
+  it("permits future production writes only with explicit gate and target identity",()=>{const c=loadConfig({...valid,AMOCRM_READ_ONLY:"false",AMOCRM_WRITES_ENABLED:"true",AMOCRM_EXPECTED_ACCOUNT_ID:"123",AMOCRM_EXPECTED_SUBDOMAIN:"expected"} as any);expect(c.AMOCRM_WRITES_ENABLED).toBe(true);expect(c.AMOCRM_ENVIRONMENT).toBe("production");});
 });
