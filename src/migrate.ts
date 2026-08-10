@@ -1,0 +1,1 @@
+import"dotenv/config";import{Pool}from"pg";import{loadConfig}from"./config.js";import{migrate}from"./storage/migrations.js";const c=loadConfig();const pool=new Pool({connectionString:c.DATABASE_URL});try{await migrate(pool);}finally{await pool.end();}

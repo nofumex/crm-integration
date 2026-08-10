@@ -28,6 +28,8 @@ describe("amoCRM read-only safety layer", () => {
     expect(transport).not.toHaveBeenCalled();
   });
 
+  it("blocks REST writes before even asking a refresh-capable token provider",async()=>{const tokenProvider={getAccessToken:vi.fn(async()=>"token")};const client=new AmoCrmRestClient({baseUrl:"https://production.amocrm.ru",tokenProvider});await expect(client.patchContact(1,{})).rejects.toBeInstanceOf(ReadOnlyViolationError);expect(tokenProvider.getAccessToken).not.toHaveBeenCalled();});
+
   it("Chats API write helper cannot bypass the same guard", async () => {
     const transport = vi.fn();
     const client = new AmoCrmChatsClient({ channelId: "channel", channelSecret: "secret", transport });

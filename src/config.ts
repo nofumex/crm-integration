@@ -1,26 +1,13 @@
-import { z } from "zod";
-
-const boolDefaultTrue = z.string().optional().transform(v => v === undefined ? true : !["false", "0", "no"].includes(v.toLowerCase()));
-const schema = z.object({
-  AMOCRM_BASE_URL: z.string().url(),
-  AMOCRM_ACCESS_TOKEN: z.string().min(1),
-  AMOCRM_READ_ONLY: boolDefaultTrue,
-  AMOCRM_CHATS_BASE_URL: z.string().url().default("https://amojo.amocrm.ru"),
-  AMOCRM_CHATS_CHANNEL_ID: z.string().optional(),
-  AMOCRM_CHATS_CHANNEL_SECRET: z.string().optional(),
-  AMOCRM_CHATS_SCOPE_ID: z.string().optional(),
-  AMOCRM_CHATS_WEBHOOK_SECRET: z.string().optional(),
-  DATABASE_URL: z.string().optional(),
-  PORT: z.coerce.number().int().positive().default(3000),
-  LOG_LEVEL: z.string().default("info"),
-  WHATSAPP_GRAPH_API_VERSION: z.string().optional(),
-  WHATSAPP_ACCESS_TOKEN: z.string().optional(),
-  WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
-  WHATSAPP_WEBHOOK_VERIFY_TOKEN: z.string().optional(),
-  WHATSAPP_APP_SECRET: z.string().optional(),
-  MAX_BOT_TOKEN: z.string().optional(),
-  MAX_WEBHOOK_SECRET: z.string().optional(),
-});
-
-export type AppConfig = z.infer<typeof schema>;
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig { return schema.parse(env); }
+import{z}from"zod";
+const bool=z.string().optional().transform(v=>v===undefined?true:!["false","0","no"].includes(v.toLowerCase()));
+const optionalText=(schema:z.ZodTypeAny)=>z.preprocess(v=>v===""?undefined:v,schema.optional());
+const schema=z.object({
+ AMOCRM_ENVIRONMENT:z.enum(["production","test"]).default("production"),
+ AMOCRM_BASE_URL:z.string().url(),AMOCRM_ACCESS_TOKEN:z.string().min(1),AMOCRM_READ_ONLY:bool,
+ AMOCRM_REFRESH_TOKEN:optionalText(z.string().min(1)),AMOCRM_INTEGRATION_ID:optionalText(z.string().min(1)),AMOCRM_CLIENT_SECRET:optionalText(z.string().min(1)),AMOCRM_REDIRECT_URI:optionalText(z.string().url()),AMOCRM_TOKEN_EXPIRES_AT:optionalText(z.coerce.number().positive()),
+ AMOCRM_CHATS_BASE_URL:z.string().url().default("https://amojo.amocrm.ru"),AMOCRM_CHATS_CHANNEL_ID:z.string().min(1),AMOCRM_CHATS_CHANNEL_SECRET:z.string().min(20),
+ DATABASE_URL:z.string().min(1),SECRET_MASTER_KEY:z.string().min(32),ADMIN_API_TOKEN:z.string().min(32),WHATSAPP_WEBHOOK_VERIFY_TOKEN:optionalText(z.string().min(16)),
+ S3_ENDPOINT:optionalText(z.string().url()),S3_REGION:z.string().min(1),S3_BUCKET:z.string().min(1),S3_ACCESS_KEY_ID:z.string().min(1),S3_SECRET_ACCESS_KEY:z.string().min(1),S3_FORCE_PATH_STYLE:z.string().optional().transform(v=>v==="true"),MEDIA_URL_TTL_SECONDS:z.coerce.number().int().min(900).max(604800).default(86400),MEDIA_MAX_BYTES:z.coerce.number().int().positive().default(25*1024*1024),MEDIA_ALLOWED_HOSTS:z.string().default("amojo.amocrm.ru,amojo.amocrm.com"),MEDIA_DOWNLOAD_TIMEOUT_MS:z.coerce.number().int().positive().default(15000),CLAMAV_HOST:z.string().min(1),CLAMAV_PORT:z.coerce.number().int().positive().default(3310),
+ PORT:z.coerce.number().int().positive().default(3000),LOG_LEVEL:z.string().default("info"),WEBHOOK_BODY_LIMIT_BYTES:z.coerce.number().int().positive().default(2*1024*1024),WEBHOOK_RATE_LIMIT_PER_MINUTE:z.coerce.number().int().positive().default(300),WORKER_CONCURRENCY:z.coerce.number().int().min(1).max(64).default(4),WORKER_LEASE_MS:z.coerce.number().int().positive().default(60000),WORKER_POLL_MS:z.coerce.number().int().positive().default(250),SHUTDOWN_TIMEOUT_MS:z.coerce.number().int().positive().default(30000),
+}).superRefine((value,ctx)=>{if(!value.AMOCRM_READ_ONLY&&value.AMOCRM_ENVIRONMENT!=="test")ctx.addIssue({code:z.ZodIssueCode.custom,path:["AMOCRM_READ_ONLY"],message:"amoCRM writes require AMOCRM_ENVIRONMENT=test"});const oauth=[value.AMOCRM_REFRESH_TOKEN,value.AMOCRM_INTEGRATION_ID,value.AMOCRM_CLIENT_SECRET,value.AMOCRM_REDIRECT_URI];if(oauth.some(Boolean)&&!oauth.every(Boolean))ctx.addIssue({code:z.ZodIssueCode.custom,path:["AMOCRM_REFRESH_TOKEN"],message:"all amoCRM OAuth refresh variables must be configured together"});});
+export type AppConfig=z.infer<typeof schema>;export function loadConfig(env:NodeJS.ProcessEnv=process.env):AppConfig{return schema.parse(env);}

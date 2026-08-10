@@ -14,10 +14,10 @@
 - Telegram Personal подключается номером/кодом; можно несколько аккаунтов. Re-login требуется при отзыве/выходе из Telegram session.
 - Для QR WhatsApp публично виден linked-device сценарий, а WABA вынесен в отдельный официальный тип. Следовательно, QR-вариант и официальный WABA нельзя считать одним способом.
 - В amoCRM сообщения создают контакты/сделки и сохраняются в карточке; доступ к каналам и «приоритетный канал» можно назначать сотрудникам.
-- Публичная страница MAX называет интеграцию официальной и описывает MAX как channel, но не раскрывает технически, personal это account или bot. Наличие официального MAX Bot API само по себе не подтверждает personal QR API.
+- Публичная инструкция MAX описывает именно personal linked-device: в приложении MAX пользователь открывает «Профиль → Устройства», сканирует QR Wazzup и после этого канал показывает имя и телефон. Значит Wazzup публично подтверждает personal MAX через QR. Однако протокол/partner contract не опубликован; воспроизводить этот механизм без официального доступа нельзя.
 - API Wazzup публикует channel state, что позволяет UI показывать connected/unauthorized/foreignphone и инициировать reconnect.
 
-Источники: [Wazzup в amoMarket](https://www.amocrm.ru/extensions/wazzup), [Telegram Personal setup](https://wazzup24.com/help/how-to-set-up/how-to-connect-telegram-personal/), [channel API](https://wazzup24.com/help/api-en/working-with-channels/), [MAX + amoCRM](https://wazzup24.ru/max-for-amocrm/).
+Источники: [Wazzup в amoMarket](https://www.amocrm.ru/extensions/wazzup), [Telegram Personal setup](https://wazzup24.com/help/how-to-set-up/how-to-connect-telegram-personal/), [channel API](https://wazzup24.com/help/api-en/working-with-channels/), [MAX personal QR setup](https://wazzup24.ru/help/how-to-configurate/kak-podkljuchit-max-k-wazzup/).
 
 ## Umnico
 

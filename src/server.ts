@@ -1,41 +1,31 @@
-import "dotenv/config";
-import { Pool } from "pg";
-import { AmoCrmChatsClient } from "./amocrm/chats-client.js";
-import { loadConfig } from "./config.js";
-import { createLogger } from "./logging.js";
-import { InMemoryMappingStore } from "./storage/mapping-store.js";
-import { PostgresMappingStore } from "./storage/postgres-store.js";
-import { MessageRouter } from "./router/message-router.js";
-import { WhatsAppAdapter } from "./adapters/whatsapp-adapter.js";
-import { MaxAdapter } from "./adapters/max-adapter.js";
-import { buildWebhookServer } from "./webhooks/server.js";
+import"dotenv/config";
+import{createHmac,timingSafeEqual}from"node:crypto";
+import{Pool}from"pg";
+import{HeadBucketCommand,S3Client}from"@aws-sdk/client-s3";
+import{loadConfig}from"./config.js";import{createLogger}from"./logging.js";
+import{AmoCrmRestClient}from"./amocrm/rest-client.js";import{AmoCrmChatsClient}from"./amocrm/chats-client.js";import{ContactChatResolver}from"./amocrm/contact-resolver.js";import{AmoChatsLifecycle}from"./amocrm/lifecycle.js";
+import{RefreshingAmoTokenProvider}from"./amocrm/oauth-token-provider.js";
+import{PostgresMappingStore}from"./storage/postgres-store.js";import{PostgresAccountRepository}from"./storage/account-repository.js";import{validateSchema}from"./storage/migrations.js";
+import{EncryptedPostgresSecretStore}from"./security/secret-store.js";import{PostgresJobQueue}from"./queue/postgres-job-queue.js";import{DurableWorker}from"./queue/worker.js";import{createRuntimeHandlers}from"./queue/runtime-handlers.js";
+import{InMemoryAdapterRegistry}from"./adapters/messenger-adapter.js";import{AdapterFactory,ReconnectSupervisor}from"./runtime/adapter-runtime.js";import{TelegramOnboardingService}from"./runtime/telegram-onboarding.js";import{AccountManagementService}from"./runtime/account-management.js";
+import{SafeMediaDownloader}from"./media/safe-downloader.js";import{S3MediaStore}from"./media/s3-media-store.js";import{ClamAvScanner}from"./media/clamav-scanner.js";import{MessageRouter}from"./router/message-router.js";import{buildWebhookServer}from"./webhooks/server.js";
 
-const config = loadConfig();
-const logger = createLogger(config.LOG_LEVEL);
+const c=loadConfig();const logger=createLogger(c.LOG_LEVEL);
+const pool=new Pool({connectionString:c.DATABASE_URL,max:Math.max(10,c.WORKER_CONCURRENCY+5),statement_timeout:30_000,query_timeout:30_000});await validateSchema(pool);
+const secrets=new EncryptedPostgresSecretStore(pool,c.SECRET_MASTER_KEY);const accounts=new PostgresAccountRepository(pool);const mappings=new PostgresMappingStore(pool);const queue=new PostgresJobQueue(pool);const registry=new InMemoryAdapterRegistry();
+const s3=new S3Client({region:c.S3_REGION,endpoint:c.S3_ENDPOINT,forcePathStyle:c.S3_FORCE_PATH_STYLE,credentials:{accessKeyId:c.S3_ACCESS_KEY_ID,secretAccessKey:c.S3_SECRET_ACCESS_KEY}});
+const scanner=new ClamAvScanner(c.CLAMAV_HOST,c.CLAMAV_PORT);const downloader=new SafeMediaDownloader({maxBytes:c.MEDIA_MAX_BYTES,timeoutMs:c.MEDIA_DOWNLOAD_TIMEOUT_MS,allowedHosts:c.MEDIA_ALLOWED_HOSTS.split(",").map(x=>x.trim()).filter(Boolean)});const media=new S3MediaStore({client:s3,bucket:c.S3_BUCKET,urlTtlSeconds:c.MEDIA_URL_TTL_SECONDS,maxBytes:c.MEDIA_MAX_BYTES,downloader,scanner});
+let tokenProvider:{getAccessToken():Promise<string>}|undefined;if(c.AMOCRM_REFRESH_TOKEN){const credentialRef="amocrm:primary";if(!await secrets.get(credentialRef))await secrets.put(credentialRef,{accessToken:c.AMOCRM_ACCESS_TOKEN,refreshToken:c.AMOCRM_REFRESH_TOKEN,expiresAt:c.AMOCRM_TOKEN_EXPIRES_AT??Date.now()+20*60*60*1000});tokenProvider=new RefreshingAmoTokenProvider({baseUrl:c.AMOCRM_BASE_URL,integrationId:c.AMOCRM_INTEGRATION_ID!,clientSecret:c.AMOCRM_CLIENT_SECRET!,redirectUri:c.AMOCRM_REDIRECT_URI!,credentialRef,secrets,writesAllowed:!c.AMOCRM_READ_ONLY});}const rest=new AmoCrmRestClient({baseUrl:c.AMOCRM_BASE_URL,...(tokenProvider?{tokenProvider}:{accessToken:c.AMOCRM_ACCESS_TOKEN}),readOnly:c.AMOCRM_READ_ONLY});const chats=new AmoCrmChatsClient({baseUrl:c.AMOCRM_CHATS_BASE_URL,channelId:c.AMOCRM_CHATS_CHANNEL_ID,channelSecret:c.AMOCRM_CHATS_CHANNEL_SECRET,readOnly:c.AMOCRM_READ_ONLY});const resolver=new ContactChatResolver(rest,chats);const lifecycle=new AmoChatsLifecycle(rest,chats,accounts);
+const factory=new AdapterFactory(secrets,queue,media,c.MEDIA_MAX_BYTES);const supervisor=new ReconnectSupervisor(accounts,registry,factory,logger);await supervisor.reconcile();const router=new MessageRouter({store:mappings,accounts,adapters:registry,chats,contactResolver:resolver,mediaStore:media});const handlers=createRuntimeHandlers(router,registry);const onboarding=new TelegramOnboardingService(secrets,accounts);const accountManagement=new AccountManagementService(accounts,secrets);
 
-if (!config.AMOCRM_CHATS_CHANNEL_ID || !config.AMOCRM_CHATS_CHANNEL_SECRET || !config.AMOCRM_CHATS_SCOPE_ID || !config.AMOCRM_CHATS_WEBHOOK_SECRET) {
-  throw new Error("amoCRM Chats credentials are required to run the webhook bridge; obtain them from amoCRM support");
-}
-
-const store = config.DATABASE_URL ? new PostgresMappingStore(new Pool({ connectionString: config.DATABASE_URL })) : new InMemoryMappingStore();
-const chats = new AmoCrmChatsClient({
-  baseUrl: config.AMOCRM_CHATS_BASE_URL,
-  channelId: config.AMOCRM_CHATS_CHANNEL_ID,
-  channelSecret: config.AMOCRM_CHATS_CHANNEL_SECRET,
-  readOnly: config.AMOCRM_READ_ONLY,
+const app=buildWebhookServer({
+ queue,amoChannelSecret:c.AMOCRM_CHATS_CHANNEL_SECRET,whatsappVerifyToken:c.WHATSAPP_WEBHOOK_VERIFY_TOKEN,
+ verifyWhatsApp:async(raw,body,signature)=>{const phoneId=String(body?.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id??"");const account=phoneId?await accounts.findByProvider("whatsapp",phoneId):undefined;if(!account)return{valid:false};const credential=await secrets.get<{appSecret:string}>(account.credentialRef);if(!credential?.appSecret)return{valid:false};const expected=`sha256=${createHmac("sha256",credential.appSecret).update(raw).digest("hex")}`;return{valid:safeEqual(signature,expected),accountId:account.id};},
+ verifyMax:async(id,value)=>{const account=await accounts.get(id);if(!account||account.messenger!=="max")return false;const secret=await secrets.get<{webhookSecret:string}>(account.credentialRef);return safeEqual(value,secret?.webhookSecret);},
+ readiness:async()=>{try{await pool.query("SELECT 1");await s3.send(new HeadBucketCommand({Bucket:c.S3_BUCKET}));const clam=await scanner.health();const jobs=await queue.counts();return{ready:clam,detail:{database:true,objectStorage:true,clamav:clam,jobs}};}catch(error){return{ready:false,detail:{error:error instanceof Error?error.message:"dependency failure"}};}},
+ onboarding,accountManagement,lifecycle,adminToken:c.ADMIN_API_TOKEN,logger,bodyLimit:c.WEBHOOK_BODY_LIMIT_BYTES,rateLimitMax:c.WEBHOOK_RATE_LIMIT_PER_MINUTE,
 });
-
-const whatsapp = config.WHATSAPP_ACCESS_TOKEN && config.WHATSAPP_PHONE_NUMBER_ID && config.WHATSAPP_GRAPH_API_VERSION
-  ? new WhatsAppAdapter({ accessToken: config.WHATSAPP_ACCESS_TOKEN, phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID, graphVersion: config.WHATSAPP_GRAPH_API_VERSION, appSecret: config.WHATSAPP_APP_SECRET })
-  : undefined;
-const max = config.MAX_BOT_TOKEN ? new MaxAdapter({ token: config.MAX_BOT_TOKEN }) : undefined;
-const adapters = [whatsapp, max].filter((value): value is NonNullable<typeof value> => Boolean(value));
-const router = new MessageRouter({ store, chats, adapters, scopeForAccount: () => config.AMOCRM_CHATS_SCOPE_ID! });
-const app = buildWebhookServer({
-  router, amoWebhookSecret: config.AMOCRM_CHATS_WEBHOOK_SECRET,
-  whatsapp, whatsappVerifyToken: config.WHATSAPP_WEBHOOK_VERIFY_TOKEN,
-  max, maxAccountId: "default", maxWebhookSecret: config.MAX_WEBHOOK_SECRET,
-  logger,
-});
-
-await app.listen({ port: config.PORT, host: "0.0.0.0" });
+const controller=new AbortController();const workers=Array.from({length:c.WORKER_CONCURRENCY},(_,i)=>new DurableWorker({queue,handlers,workerId:`${process.pid}-${i}`,leaseMs:c.WORKER_LEASE_MS,pollMs:c.WORKER_POLL_MS,logger}).start(controller.signal));const supervise=supervisor.run(controller.signal).catch(error=>logger.error({error:error instanceof Error?error.message:"supervisor failed"},"supervisor stopped"));await app.listen({port:c.PORT,host:"0.0.0.0"});
+let stopping=false;async function shutdown(signal:string){if(stopping)return;stopping=true;logger.info({signal},"graceful shutdown");controller.abort();await app.close();await supervisor.shutdown();await Promise.race([Promise.allSettled([...workers,supervise]),new Promise(r=>setTimeout(r,c.SHUTDOWN_TIMEOUT_MS))]);await pool.end();}
+process.once("SIGTERM",()=>void shutdown("SIGTERM"));process.once("SIGINT",()=>void shutdown("SIGINT"));
+function safeEqual(a?:string,b?:string){if(!a||!b||a.length!==b.length)return false;return timingSafeEqual(Buffer.from(a),Buffer.from(b));}

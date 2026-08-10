@@ -6,13 +6,16 @@ import type { InboundHandler, MessengerAdapter, StatusHandler } from "./messenge
 import type { NormalizedAttachment, NormalizedMessage, SendMessageCommand, SendResult } from "../domain/messages.js";
 import type { MediaStore } from "../media/media-store.js";
 
-interface TelegramOptions {
+export interface TelegramOptions {
   apiId: number;
   apiHash: string;
   accountId: string;
   session: string;
   connectionRetries?: number;
   mediaStore?: MediaStore;
+  /** Test seam; production creates a real MTProto client from the encrypted session. */
+  client?: TelegramClient;
+  maxMediaBytes?: number;
 }
 
 export interface TelegramAuthorizationPrompts {
@@ -25,13 +28,15 @@ export interface TelegramAuthorizationPrompts {
 /** MTProto user-account adapter using GramJS; one instance represents one Telegram account/session. */
 export class TelegramAdapter implements MessengerAdapter {
   readonly kind = "telegram" as const;
+  readonly accountId: string;
   private readonly client: TelegramClient;
   private inbound?: InboundHandler;
   private status?: StatusHandler;
   private handlerInstalled = false;
 
   constructor(private readonly options: TelegramOptions) {
-    this.client = new TelegramClient(new StringSession(options.session), options.apiId, options.apiHash, {
+    this.accountId=options.accountId;
+    this.client = options.client ?? new TelegramClient(new StringSession(options.session), options.apiId, options.apiHash, {
       connectionRetries: options.connectionRetries ?? 10,
       autoReconnect: true,
     });
@@ -58,6 +63,11 @@ export class TelegramAdapter implements MessengerAdapter {
     return { connected: Boolean(this.client.connected), detail: this.client.connected ? undefined : "disconnected" };
   }
 
+  async resolveRecipient(identifier:{phone?:string;username?:string}):Promise<{providerRecipientId:string;providerConversationId:string}>{
+    const value=identifier.username??identifier.phone;if(!value)throw new Error("Telegram recipient phone or username is required");
+    const entity:any=await this.client.getEntity(value);const id=String(entity.id);return{providerRecipientId:id,providerConversationId:id};
+  }
+
   async send(command: SendMessageCommand): Promise<SendResult> {
     const attachment = command.attachments?.[0];
     const result = attachment?.url
@@ -75,6 +85,7 @@ export class TelegramAdapter implements MessengerAdapter {
       const senderId = String(msg.senderId ?? msg.peerId?.userId ?? "unknown");
       const attachments: NormalizedAttachment[] = msg.media ? [{ kind: inferTelegramMediaKind(msg.media), id: String(msg.id) }] : [];
       if (msg.media && this.options.mediaStore) {
+        const declaredSize=Number(msg.media?.document?.size??0);if(declaredSize>(this.options.maxMediaBytes??25*1024*1024))throw new Error("Telegram media exceeds size limit");
         const downloaded = await this.client.downloadMedia(msg.media, {});
         if (downloaded) {
           const data = typeof downloaded === "string" ? await readFile(downloaded) : Buffer.from(downloaded);

@@ -1,33 +1,7 @@
-import { createHmac } from "node:crypto";
-import { describe, expect, it, vi } from "vitest";
-import { buildWebhookServer } from "../src/webhooks/server.js";
-
-describe("webhook authentication", () => {
-  it("rejects an invalid amoCRM signature before routing", async () => {
-    const routeAmoOutbound = vi.fn();
-    const app = buildWebhookServer({ router: { routeAmoOutbound } as any, amoWebhookSecret: "secret" });
-    const response = await app.inject({ method: "POST", url: "/webhooks/amocrm/scope", headers: { "content-type": "application/json", "x-signature": "invalid" }, payload: { message: {} } });
-    expect(response.statusCode).toBe(401);
-    expect(routeAmoOutbound).not.toHaveBeenCalled();
-    await app.close();
-  }, 15_000);
-
-  it("routes an amoCRM webhook signed over exact raw bytes", async () => {
-    const routeAmoOutbound = vi.fn(async () => undefined);
-    const app = buildWebhookServer({ router: { routeAmoOutbound } as any, amoWebhookSecret: "secret" });
-    const raw = '{"message":{"message":{"id":"m1"}}}';
-    const signature = createHmac("sha1", "secret").update(raw).digest("hex");
-    const response = await app.inject({ method: "POST", url: "/webhooks/amocrm/scope", headers: { "content-type": "application/json", "x-signature": signature }, payload: raw });
-    expect(response.statusCode).toBe(200);
-    expect(routeAmoOutbound).toHaveBeenCalledOnce();
-    await app.close();
-  });
-
-  it("validates WhatsApp verification token", async () => {
-    const app = buildWebhookServer({ router: {} as any, amoWebhookSecret: "secret", whatsappVerifyToken: "verify-me" });
-    const response = await app.inject({ method: "GET", url: "/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=verify-me&hub.challenge=12345" });
-    expect(response.statusCode).toBe(200);
-    expect(response.body).toBe("12345");
-    await app.close();
-  });
+import{createHmac}from"node:crypto";import{describe,expect,it,vi}from"vitest";import{buildWebhookServer}from"../src/webhooks/server.js";import{InMemoryJobQueue}from"../src/queue/in-memory-job-queue.js";
+describe("durable webhook ACK",()=>{
+ it("atomically enqueues amoCRM payload and ACKs without business processing",async()=>{const queue=new InMemoryJobQueue();const app=buildWebhookServer({queue,amoChannelSecret:"channel-secret-1234567890"});const raw='{ "message": {"conversation":{"id":"c1"},"message":{"id":"m1"}}}';const signature=createHmac("sha1","channel-secret-1234567890").update(raw).digest("hex");const response=await app.inject({method:"POST",url:"/webhooks/amocrm/scope-1",headers:{"content-type":"application/json","x-signature":signature},payload:raw});expect(response.statusCode).toBe(200);expect((await queue.counts()).pending).toBe(1);await app.close();},15000);
+ it("deduplicates repeated amoCRM webhook",async()=>{const queue=new InMemoryJobQueue();const app=buildWebhookServer({queue,amoChannelSecret:"channel-secret-1234567890"});const raw='{"message":{"conversation":{"id":"c1"},"message":{"id":"m1"}}}';const signature=createHmac("sha1","channel-secret-1234567890").update(raw).digest("hex");for(let i=0;i<2;i++)await app.inject({method:"POST",url:"/webhooks/amocrm/scope",headers:{"content-type":"application/json","x-signature":signature},payload:raw});expect((await queue.counts()).pending).toBe(1);await app.close();});
+ it("rejects bad signature before database enqueue",async()=>{const queue=new InMemoryJobQueue();const app=buildWebhookServer({queue,amoChannelSecret:"channel-secret-1234567890"});const r=await app.inject({method:"POST",url:"/webhooks/amocrm/scope",headers:{"content-type":"application/json","x-signature":"bad"},payload:{message:{}}});expect(r.statusCode).toBe(401);expect((await queue.counts()).pending).toBe(0);await app.close();});
+ it("persists a whole verified WhatsApp delivery atomically as one raw job",async()=>{const queue=new InMemoryJobQueue();const verifyWhatsApp=vi.fn(async()=>({valid:true,accountId:"wa-1"}));const app=buildWebhookServer({queue,amoChannelSecret:"channel-secret-1234567890",verifyWhatsApp});const payload={entry:[{changes:[{value:{messages:[{id:"m1",from:"1"},{id:"m2",from:"2"}]}}]}]};const r=await app.inject({method:"POST",url:"/webhooks/whatsapp",headers:{"content-type":"application/json","x-hub-signature-256":"sha256=test"},payload});expect(r.statusCode).toBe(200);expect((await queue.counts()).pending).toBe(1);expect(verifyWhatsApp).toHaveBeenCalledOnce();await app.close();});
 });

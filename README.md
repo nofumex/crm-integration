@@ -1,31 +1,33 @@
 # amoCRM Messenger Bridge
 
-Безопасный TypeScript-прототип собственной интеграции amoCRM Chats API с Telegram user accounts, WhatsApp Cloud API и официальным MAX Bot API.
+TypeScript service integrating amoCRM Chats API with Telegram user accounts (MTProto), WhatsApp Business Cloud API and the official MAX Bot API.
 
-## Safety
+The checked-in implementation is deployable, but it is not labelled production-ready until real round-trip tests are completed on separate test accounts. Personal MAX is intentionally unsupported because no public official API exists.
 
-`AMOCRM_READ_ONLY` по умолчанию равен `true`. Оба amoCRM clients физически блокируют любой метод кроме GET до вызова network transport. Текущий production `.env` не изменяется. Для write/E2E нужен отдельный trial/test аккаунт и явный `AMOCRM_READ_ONLY=false` только в его окружении.
+## Absolute amoCRM safety boundary
+
+`AMOCRM_READ_ONLY` defaults to `true`. Both amoCRM clients reject every non-GET method before calling network transport. Startup additionally rejects write mode unless `AMOCRM_ENVIRONMENT=test`. Never point a write-enabled deployment at the current production tenant.
 
 ```powershell
-npm install
-npm test
+npm ci
 npm run build
+npm test
+npm run migrate
+npm start
 ```
 
-## Структура
+Production storage is PostgreSQL; S3-compatible object storage and ClamAV are mandatory. The server will not start with an incomplete config or an unapplied schema. Readiness checks PostgreSQL, object storage and ClamAV.
 
-- `src/amocrm` — раздельные REST и Chats clients.
-- `src/adapters` — общий contract и Telegram/WhatsApp/MAX implementations.
-- `src/router` — incoming/outgoing routing, ordering, deduplication and retry.
-- `src/storage` и `migrations` — mapping repository и PostgreSQL schema.
-- `src/webhooks` — authenticated amoCRM/Meta/MAX endpoints.
-- `docs` — исследование, аналоги и architecture.
+## Runtime
 
-Скопируйте только нужные имена из `.env.example` в secret manager/окружение. Не коммитьте значения. Перед первым запуском примените `migrations/001_initial.sql`. Telegram accounts создаются отдельными `TelegramAdapter` instances после интерактивного onboarding; сохранённую session нужно шифровать через `src/security/session-crypto.ts` и хранить по `credential_ref`.
+- `src/amocrm`: separate OAuth REST and HMAC Chats clients, lifecycle and contact/chat resolver.
+- `src/adapters`: account-specific Telegram, WhatsApp and MAX adapters.
+- `src/runtime`: encrypted onboarding, adapter factory and reconnect supervisor.
+- `src/queue`: PostgreSQL inbox/outbox, partition ordering, leases, retries and dead-letter.
+- `src/router`: normalized inbound/outbound flow using persisted provider IDs.
+- `src/media`: SSRF-safe downloads, limits, malware scanning, encrypted object storage and signed URLs.
+- `src/webhooks`: verified webhook ingress, immediate durable ACK, health/admin endpoints.
 
-## Текущие ограничения прототипа
+Copy names from `.env.example` into the deployment secret manager; do not put credentials into source control. Messenger credentials are submitted to the authenticated admin API and encrypted before persistence.
 
-- Нельзя подключить amoCRM Chats без выданных поддержкой `channel_id/channel_secret/bot/webhook` данных.
-- WhatsApp template commands, защищённый media proxy/object storage и Embedded Signup ещё не реализованы.
-- MAX personal account не реализуется: публичного официального API нет. MAX adapter — только Bot API.
-- In-process ordering/retry перед production заменяется durable queue/outbox.
+Operational and E2E steps are in [docs/e2e-runbook.md](docs/e2e-runbook.md). Research and design are in [docs/research.md](docs/research.md), [docs/analogues.md](docs/analogues.md), and [docs/architecture.md](docs/architecture.md).

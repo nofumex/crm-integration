@@ -1,77 +1,65 @@
-# Архитектура messenger bridge
+# Архитектура amoCRM Messenger Bridge
 
 ```text
-amoCRM REST API (OAuth)       amoCRM Chats API / amojo (HMAC)
-          \                         /
-           \--- Message Router ---/
-                    |
-          PostgreSQL mappings + inbox
-                    |
-             MessengerAdapter
-             /       |       \
- Telegram MTProto  WhatsApp  MAX Bot API
-    (teleproto)    Cloud API  (personal blocked)
+amoCRM REST API (OAuth)         amoCRM Chats API (HMAC-SHA1)
+           \                         /
+            Contact/chat resolver  Webhook ingress
+                       \           /
+                    PostgreSQL jobs
+                          |
+                  durable workers/router
+                          |
+                   Adapter registry
+                 /          |          \
+        Telegram MTProto  WhatsApp     MAX Bot API
+                         Cloud API   (personal BLOCKED)
 ```
 
-## Границы компонентов
+## Границы и multi-account
 
-- `AmoCrmRestClient`: account/users metadata, contacts/chats binding, sources. Любой HTTP проходит через общий safety guard.
-- `AmoCrmChatsClient`: отдельная HMAC-авторизация, connect/create/send/status/history. Не принимает OAuth token.
-- `MessageRouter`: нормализация, выбор account adapter, idempotency, ordering, mapping и status propagation.
-- `MessengerAdapter`: общий lifecycle `connect/disconnect/health`, `send`, inbound/status callbacks. Конкретные provider payloads не выходят за adapter.
-- PostgreSQL: authoritative mapping и durable webhook inbox. Нельзя полагаться только на IDs из UI amoCRM.
-- Webhook server: проверяет raw-body signature/secret до router: amoCRM HMAC-SHA1, WhatsApp `X-Hub-Signature-256`, MAX `X-Max-Bot-Api-Secret`.
+`messenger_accounts` — центральная сущность канала. Каждая запись имеет собственные provider account ID, encrypted `credential_ref`, amoCRM account/scope/source, config и connection state. Global scope и account `default` отсутствуют. Adapter registry индексируется парой `(messenger, account_id)`.
 
-## Incoming flow
+REST и Chats API — разные клиенты и разные credentials. `/connect` вызывается с полученным через REST `amojo_id`, а возвращённый `scope_id` атомарно сохраняется для конкретного messenger account. Source создаётся официальным Sources API и используется вместе со scope для outbound routing.
 
-1. Provider webhook/update приходит в adapter; проверяется подпись до разбора бизнес-данных.
-2. Adapter строит `NormalizedMessage` со стабильными provider account/chat/message IDs.
-3. `webhook_events` атомарно резервирует ключ `{provider,account,conversation,message}`. Конфликт с complete/processing — HTTP 200 без повторной отправки. Failed может быть зарезервирован повторно.
-4. Per-conversation serial executor сохраняет порядок, но разные диалоги обрабатываются параллельно.
-5. Router находит `conversation_mappings`, выбирает `scope_id`, формирует amojo `new_message`. Для первой коммуникации amoCRM создаёт чат/contact/unsorted; для заранее известного contact выполняется отдельный create-chat + REST link flow только в разрешённом тестовом/production deployment.
-6. Ответ amojo (`conversation_id`, `msgid`, `ref_id`) сохраняется вместе с provider IDs. Только после этого inbox-event помечается complete.
-7. Несколько вложений разбиваются на упорядоченные message parts с deterministic suffix и общим provider media-group metadata.
+## Inbound
 
-## Outgoing flow
+1. Provider update проходит проверку подписи/secret и body/rate limits. Telegram update принимает уже авторизованный account-specific MTProto client.
+2. Webhook одним PostgreSQL `INSERT ... ON CONFLICT` сохраняется в `jobs`; только после commit возвращается HTTP 200. Бизнес-обработка в request handler не выполняется. Это критично для amoCRM, которая не повторяет Chats webhooks.
+3. Worker claims запись через `FOR UPDATE SKIP LOCKED`. Более поздняя работа той же partition не выдаётся, пока ранняя pending/processing. Lease heartbeat защищает длительную media-операцию; reaper возвращает abandoned jobs после crash/restart.
+4. Adapter переводит payload в `NormalizedMessage`. Queue dedupe key содержит реальные account/conversation/message IDs.
+5. Router находит mapping. При точном совпадении нормализованного телефона создаёт чат через Chats API и официально связывает UUID чата с существующим контактом через `POST /api/v4/contacts/chats`; сохраняет contact/lead ID. В остальных случаях amoCRM создаёт стандартный чат/неразобранное по правилам канала.
+6. Media скачивается только по HTTPS, с DNS/IP SSRF-проверкой, allowlist, timeout и потоковым size limit; затем malware scan, S3 server-side encryption и короткоживущая signed URL.
+7. Входящее `new_message` отправляется в amoCRM, после чего сохраняются обе стороны ID. Повторный provider webhook не создаёт второй job.
 
-1. Менеджер пишет в стандартном интерфейсе amoCRM.
-2. amoCRM отправляет webhook v2 на URL канала (`:scope_id`). Raw-body signature проверяется constant-time.
-3. `message.message.id` — idempotency key. По `conversation.id` находится provider/account/chat.
-4. Router сериализует отправку для диалога и вызывает нужный adapter. Adapter возвращает provider message ID.
-5. Mapping сохраняется; amojo получает delivery status. Поздние provider webhooks обновляют delivered/read/failed. Status reducer должен быть монотонным (`sent < delivered < read`; `failed` хранится отдельно), потому что WhatsApp предупреждает о возможном нарушении порядка status webhooks.
-6. При «Написать первым» mapping создаётся из amo conversation reference и receiver phone; первый ответ клиента связывает external `conversation_id` через `conversation_ref_id`.
+## Outbound и write-first
 
-## Таблицы
+Webhook amoCRM проверяется HMAC-SHA1 `X-Signature` по raw body и `channel_secret`. Отдельного webhook secret нет. Partition — scope + amo conversation; dedupe key — scope + amo message ID.
 
-- `messenger_accounts`: provider, external account ID, display label, opaque `credential_ref`, connection state. Секретов в таблице mapping нет; `credential_ref` указывает на KMS/Vault record.
-- `conversation_mappings`: messenger account/chat ↔ amo conversation/contact/lead/scope; уникальность provider tuple и amo conversation UUID.
-- `message_mappings`: оба message IDs, direction, status и timestamps; уникальность provider message tuple и amo message ID.
-- `webhook_events`: provider event ID, payload hash, state, attempts, last error and timestamps. Это inbox/dedup barrier.
+Для существующего mapping adapter получает только сохранённые `provider_recipient_id` и `provider_conversation_id`. `receiver.id` amoCRM никогда не используется как messenger ID. При write-first account выбирается по `(scope_id, source.external_id)`, затем adapter официальным API резолвит телефон/username и сохраняет реальные provider IDs до отправки. Telegram может резолвить username/phone, WhatsApp использует E.164 phone; MAX Bot не может начать диалог до `/start` и поэтому write-first для MAX заблокирован.
 
-Миграция: `migrations/001_initial.sql`.
+WhatsApp free-form разрешается только внутри 24-hour window от `last_inbound_at`; вне окна требуется account-specific mapping одобренного template. Status webhooks обновляют mapping монотонно и передают delivered/read/failed в Chats API.
 
 ## Надёжность
 
-- Idempotency действует до side effect; provider IDs и amo `msgid` должны быть детерминированными.
-- В прототипе есть in-process keyed ordering и retry с exponential backoff. Production deployment должен заменить это на durable queue/outbox (например, PostgreSQL `FOR UPDATE SKIP LOCKED`) и lease/reaper для зависших `processing` events.
-- Webhook endpoint желательно быстро сохраняет inbox и отвечает 200; тяжёлая обработка выполняется worker. Текущий synchronous handler достаточен для локального прототипа, но не для production SLA.
-- Ошибки 429/5xx retry; постоянные 4xx переходят в dead-letter/reconnect state. Retry имеет jitter и honours `Retry-After` в production worker.
-- Adapter supervisor выполняет heartbeat, exponential reconnect и circuit breaker на account. Один сломанный account не останавливает другие.
-- Media скачивается потоково, с allowlist HTTPS, лимитом размера/type, malware scan, checksum и короткоживущим object-storage URL. Никогда не проксировать произвольный URL без SSRF-защиты.
+- PostgreSQL — единственный production storage для accounts, encrypted secrets, conversation/message mappings и jobs.
+- Семантика delivery — at-least-once. Provider APIs не дают общей транзакции с нашей БД, поэтому остаётся неизбежное ambiguous-result окно, если процесс погиб после принятия сообщения provider, но до сохранения ответа. Стабильные provider/amo IDs и reconciliation уменьшают риск; обещать exactly-once нельзя.
+- Retry выполняется для 429/408/5xx и временных network/dependency ошибок, учитывает `Retry-After`, exponential backoff и jitter. Постоянные HTTP 4xx идут в dead-letter.
+- Ordering обеспечивается partition key; разные диалоги обрабатываются параллельно.
+- Supervisor поддерживает отдельное состояние/reconnect backoff каждого account. Graceful shutdown прекращает claim, ждёт workers, закрывает adapters, HTTP и pool.
+- `/health/live` проверяет процесс; `/health/ready` — PostgreSQL, S3, ClamAV и состояние queue.
 
 ## Безопасность
 
-- `AMOCRM_READ_ONLY` по умолчанию true. Guard блокирует любой метод кроме GET **до** транспорта для REST и Chats clients. Отключать только в отдельном тестовом amoCRM environment.
-- Production credentials из текущего `.env` используются только REST GET. Chats credentials — отдельные переменные.
-- Telegram session шифруется AES-256-GCM; master key вне БД. WhatsApp/MAX tokens — KMS/Vault. Ротация без deploy.
-- Structured logger редактирует authorization, token, secret, session, password и login code. Raw payload не логировать по умолчанию; PII — hash/last digits only.
-- Webhooks проверяются по exact raw bytes; replay дополнительно ограничивается inbox ID и timestamp where provider supplies it.
-- Endpoint rate limits, max body size, TLS, dependency timeouts, egress allowlist and audit log обязательны до production.
+`AMOCRM_READ_ONLY` по умолчанию `true`; общий transport guard блокирует любой не-GET до вызова сети. Кроме того, startup запрещает `AMOCRM_READ_ONLY=false`, пока `AMOCRM_ENVIRONMENT` не равен `test`. Production `.env` не меняется.
 
-## Deployment stages
+Sessions/tokens/app secrets хранятся через `SecretStore`; PostgreSQL implementation использует AES-256-GCM envelope encryption, а master key приходит извне. Request logging webhook/admin bodies отключён; logger redacts authorization/token/secret/session/password/code. Admin onboarding защищён bearer token. TLS termination и сетевые egress/ingress policies остаются обязанностью deployment perimeter.
 
-1. Local/mocks: clients, mappings, router, signature and safety tests.
-2. Telegram Test DC; Meta test number; moderated MAX test bot; отдельный trial amoCRM.
-3. Получить channel credentials у amoCRM и выполнить connect только в trial account.
-4. E2E matrix: text/media, duplicates, ordering, 429/5xx, restart, reconnect, 2FA, 24-hour window/template, read/error status.
-5. Security/load review, durable queue/object storage/KMS, затем отдельное согласованное включение production write mode.
+## Таблицы
+
+- `messenger_accounts`: отдельные credentials/source/scope/state каждого номера или аккаунта.
+- `conversation_mappings`: provider account/chat/recipient ↔ amo conversation/contact/lead/scope, `last_inbound_at`, write-first state.
+- `message_mappings`: provider/amo message IDs, direction, monotonic status/timestamps.
+- `jobs`: durable inbox/outbox, hash/dedupe, partition, attempts, availability, lease, completed/dead state.
+- `secrets`: только AES-GCM ciphertext; plaintext credentials не сохраняются.
+
+Миграция: `migrations/001_initial.sql`.

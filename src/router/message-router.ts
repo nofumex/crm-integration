@@ -1,111 +1,51 @@
-import { createHash } from "node:crypto";
 import type { AmoCrmChatsClient } from "../amocrm/chats-client.js";
-import type { MessengerAdapter } from "../adapters/messenger-adapter.js";
-import type { MessengerKind, NormalizedAttachment, NormalizedMessage, SendMessageCommand } from "../domain/messages.js";
-import type { MappingStore } from "../storage/mapping-store.js";
-import { KeyedSerialExecutor } from "../core/keyed-serial-executor.js";
-import { withRetry } from "../core/retry.js";
+import type { ContactChatResolver } from "../amocrm/contact-resolver.js";
+import type { AdapterRegistry } from "../adapters/messenger-adapter.js";
+import type { AccountRepository } from "../domain/accounts.js";
+import type { MessengerKind,NormalizedAttachment,NormalizedMessage,SendMessageCommand,MessageStatus } from "../domain/messages.js";
+import type { MappingStore,ConversationMapping } from "../storage/mapping-store.js";
+import type{MediaStore}from"../media/media-store.js";
 
-interface RouterOptions {
-  store: MappingStore;
-  chats: AmoCrmChatsClient;
-  adapters: MessengerAdapter[];
-  scopeForAccount: (messenger: MessengerKind, accountId: string) => Promise<string> | string;
-}
+interface Options {store:MappingStore;accounts:AccountRepository;adapters:AdapterRegistry;chats:AmoCrmChatsClient;contactResolver?:ContactChatResolver;mediaStore?:MediaStore;now?:()=>Date;}
 
 export class MessageRouter {
-  private readonly adapters = new Map<MessengerKind, MessengerAdapter>();
-  private readonly serial = new KeyedSerialExecutor();
-  constructor(private readonly options: RouterOptions) {
-    for (const adapter of options.adapters) {
-      this.adapters.set(adapter.kind, adapter);
-      adapter.onInbound(message => this.routeInbound(message));
-      adapter.onStatus(async (accountId, id, status) => {
-        const message = await this.options.store.findMessageByMessengerId(adapter.kind, accountId, id);
-        await this.options.store.updateMessageStatus(adapter.kind, accountId, id, status);
-        if (!message?.amoMessageId || status === "sent" || status === "queued") return;
-        const conversation = message.amoConversationId ? await this.options.store.findConversationByAmoId(message.amoConversationId) : undefined;
-        if (!conversation) return;
-        await this.options.chats.updateDeliveryStatus(conversation.amoScopeId, message.amoMessageId, status === "read" ? { status_code: 2 } : status === "delivered" ? { status_code: 1 } : { status_code: -1, error_code: 905, error: "Messenger reported delivery failure" });
-      });
-    }
-  }
+ private readonly now:()=>Date;
+ constructor(private readonly options:Options){this.now=options.now??(()=>new Date());}
 
-  async routeInbound(message: NormalizedMessage): Promise<void> {
-    const provider = `${message.messenger}:inbound`;
-    const eventId = `${message.accountId}:${message.conversationId}:${message.id}`;
-    const hash = sha256(JSON.stringify({ id: message.id, text: message.text, attachments: message.attachments }));
-    if (!(await this.options.store.reserveEvent(provider, eventId, hash))) return;
-    const key = `${message.messenger}:${message.accountId}:${message.conversationId}`;
-    try {
-      await this.serial.run(key, async () => {
-        const scopeId = await this.options.scopeForAccount(message.messenger, message.accountId);
-        const existing = await this.options.store.getConversation(message.messenger, message.accountId, message.conversationId);
-        const parts = message.attachments.length ? message.attachments : [undefined];
-        let amoConversationId = existing?.amoConversationId;
-        for (let i = 0; i < parts.length; i++) {
-          const externalMessageId = parts.length === 1 ? message.id : `${message.id}:${i}`;
-          const response: any = await withRetry(() => this.options.chats.sendMessage(scopeId, amoPayload(message, externalMessageId, parts[i], amoConversationId)));
-          amoConversationId = response?.new_message?.conversation_id ?? amoConversationId;
-          await this.options.store.saveMessage({ messenger: message.messenger, messengerAccountId: message.accountId, messengerMessageId: externalMessageId, messengerConversationId: message.conversationId, amoMessageId: response?.new_message?.msgid, amoConversationId, direction: "inbound", status: "sent", occurredAt: message.occurredAt });
-        }
-        await this.options.store.upsertConversation({ messenger: message.messenger, messengerAccountId: message.accountId, messengerConversationId: message.conversationId, amoConversationId, amoContactId: existing?.amoContactId, amoLeadId: existing?.amoLeadId, amoScopeId: scopeId });
-      });
-      await this.options.store.completeEvent(provider, eventId);
-    } catch (error) {
-      await this.options.store.failEvent(provider, eventId, safeError(error));
-      throw error;
-    }
-  }
+ async routeInbound(input:NormalizedMessage):Promise<void>{
+  const message={...input,occurredAt:new Date(input.occurredAt)};const account=await this.options.accounts.get(message.accountId);if(!account||account.messenger!==message.messenger)throw new Error(`Unknown ${message.messenger} account ${message.accountId}`);if(!account.amoScopeId)throw new Error(`Account ${account.id} has no amoCRM scope_id`);
+  let mapping=await this.options.store.getConversation(message.messenger,account.id,message.conversationId);
+  if(!mapping){mapping={messenger:message.messenger,messengerAccountId:account.id,providerConversationId:message.conversationId,providerRecipientId:message.sender.externalId,amoScopeId:account.amoScopeId,writeFirstState:"none",lastInboundAt:message.occurredAt};
+   if(message.sender.phone&&this.options.contactResolver){const contact=await this.options.contactResolver.findExactByPhone(message.sender.phone);if(contact){const chat=await this.options.contactResolver.createChatAndLink(account,message.conversationId,message.sender,contact);mapping.amoConversationId=chat.amoConversationId;mapping.amoContactId=contact.contactId;mapping.amoLeadId=contact.leadId;}}
+  } else {mapping.lastInboundAt=message.occurredAt;if(mapping.writeFirstState==="pending")mapping.writeFirstState="linked";}
+  const parts=message.attachments.length?message.attachments:[undefined];
+  for(let i=0;i<parts.length;i++){const externalId=parts.length===1?message.id:`${message.id}:${i}`;const response:any=await this.options.chats.sendMessage(account.amoScopeId,amoPayload(message,externalId,parts[i],mapping,account.sourceExternalId));await this.options.store.saveMessage({messenger:message.messenger,messengerAccountId:account.id,messengerMessageId:externalId,providerConversationId:message.conversationId,amoMessageId:response?.new_message?.msgid,amoConversationId:mapping.amoConversationId,direction:"inbound",status:"sent",occurredAt:message.occurredAt,statusAt:this.now()});}
+  await this.options.store.upsertConversation(mapping);
+ }
 
-  async routeAmoOutbound(hook: any): Promise<void> {
-    const data = hook?.message ?? hook;
-    const amoMessageId = String(data?.message?.id ?? "");
-    const amoConversationId = String(data?.conversation?.id ?? "");
-    if (!amoMessageId || !amoConversationId) throw new Error("Invalid amoCRM Chats v2 message webhook");
-    const provider = "amocrm:outbound";
-    if (!(await this.options.store.reserveEvent(provider, amoMessageId, sha256(JSON.stringify(hook))))) return;
-    try {
-      const mapping = await this.options.store.findConversationByAmoId(amoConversationId);
-      if (!mapping) throw new Error(`No conversation mapping for amoCRM conversation ${amoConversationId}`);
-      const adapter = this.adapters.get(mapping.messenger);
-      if (!adapter) throw new Error(`No adapter registered for ${mapping.messenger}`);
-      const command: SendMessageCommand = {
-        accountId: mapping.messengerAccountId, conversationId: mapping.messengerConversationId,
-        recipientId: String(data?.receiver?.id ?? mapping.messengerConversationId), text: data?.message?.text,
-        attachments: amoWebhookAttachments(data?.message), idempotencyKey: amoMessageId,
-      };
-      const result = await this.serial.run(`${mapping.messenger}:${mapping.messengerAccountId}:${mapping.messengerConversationId}`, () => withRetry(() => adapter.send(command)));
-      await this.options.store.saveMessage({ messenger: mapping.messenger, messengerAccountId: mapping.messengerAccountId, messengerMessageId: result.externalMessageId, messengerConversationId: mapping.messengerConversationId, amoMessageId, amoConversationId, direction: "outbound", status: result.status, occurredAt: result.occurredAt });
-      if (result.status !== "sent" && result.status !== "queued") {
-        await this.options.chats.updateDeliveryStatus(mapping.amoScopeId, amoMessageId, { status_code: result.status === "read" ? 2 : result.status === "delivered" ? 1 : -1, ...(result.status === "failed" ? { error_code: 905, error: "Messenger rejected the message" } : {}) });
-      }
-      await this.options.store.completeEvent(provider, amoMessageId);
-    } catch (error) {
-      await this.options.store.failEvent(provider, amoMessageId, safeError(error));
-      throw error;
-    }
-  }
+ async routeAmoOutbound(hook:any,scopeId:string):Promise<void>{
+  const data=hook?.message??hook;const amoMessageId=String(data?.message?.id??"");const amoConversationId=String(data?.conversation?.id??"");if(!amoMessageId||!amoConversationId)throw new Error("Invalid amoCRM Chats v2 message webhook");
+  let mapping=await this.options.store.findConversationByAmoId(amoConversationId);
+  if(!mapping&&data?.conversation?.client_id){const base=await this.resolveAccount(scopeId,data);mapping=await this.options.store.getConversation(base.messenger,base.id,String(data.conversation.client_id));if(mapping){mapping.amoConversationId=amoConversationId;await this.options.store.upsertConversation(mapping);}}
+  if(!mapping){const account=await this.resolveAccount(scopeId,data);const adapter=this.requiredAdapter(account.messenger,account.id);const phone=normalizePhone(data?.receiver?.phone);const username=typeof data?.receiver?.username==="string"?data.receiver.username:undefined;if(!phone&&!username)throw new Error("Write-first webhook has no provider mapping and no receiver phone/username");const recipient=await adapter.resolveRecipient({phone,username});mapping={messenger:account.messenger,messengerAccountId:account.id,providerConversationId:recipient.providerConversationId,providerRecipientId:recipient.providerRecipientId,amoConversationId,amoScopeId:account.amoScopeId!,writeFirstState:"pending"};await this.options.store.upsertConversation(mapping);}
+  const account=await this.options.accounts.get(mapping.messengerAccountId);if(!account)throw new Error(`Mapped account ${mapping.messengerAccountId} not found`);const adapter=this.requiredAdapter(mapping.messenger,mapping.messengerAccountId);
+  const template=resolveTemplate(account.config,data?.message?.template);if(mapping.messenger==="whatsapp"&&!within24Hours(mapping.lastInboundAt,this.now())&&!template)throw new Error("WhatsApp message outside 24-hour window requires a configured approved template");
+  let attachments=amoWebhookAttachments(data?.message);if(attachments.length){if(!this.options.mediaStore)throw new Error("Outbound media requires MediaStore");attachments=await Promise.all(attachments.map(async a=>({...a,...await this.options.mediaStore!.ingestRemote({url:a.url!,kind:a.kind,fileName:a.fileName,sourceId:`amo:${amoMessageId}`} )})));}
+  const command:SendMessageCommand={accountId:account.id,conversationId:required(mapping.providerConversationId,"provider conversation"),recipientId:mapping.providerRecipientId,text:data?.message?.text,attachments,idempotencyKey:amoMessageId,template};
+  const result=await adapter.send(command);await this.options.store.saveMessage({messenger:mapping.messenger,messengerAccountId:account.id,messengerMessageId:result.externalMessageId,providerConversationId:command.conversationId,amoMessageId,amoConversationId,direction:"outbound",status:result.status,statusAt:result.occurredAt,occurredAt:result.occurredAt});
+  if(result.status!=="sent"&&result.status!=="queued")await this.pushStatus(mapping.amoScopeId,amoMessageId,result.status);
+ }
+
+ async routeStatus(payload:{messenger:MessengerKind;accountId:string;id:string;status:MessageStatus;occurredAt:string|Date}):Promise<void>{const at=new Date(payload.occurredAt);const message=await this.options.store.findMessageByMessengerId(payload.messenger,payload.accountId,payload.id);await this.options.store.updateMessageStatus(payload.messenger,payload.accountId,payload.id,payload.status,at);if(!message?.amoMessageId||!message.amoConversationId||payload.status==="sent"||payload.status==="queued")return;const mapping=await this.options.store.findConversationByAmoId(message.amoConversationId);if(mapping)await this.pushStatus(mapping.amoScopeId,message.amoMessageId,payload.status);}
+ private async pushStatus(scope:string,id:string,status:MessageStatus){await this.options.chats.updateDeliveryStatus(scope,id,status==="read"?{status_code:2}:status==="delivered"?{status_code:1}:{status_code:-1,error_code:905,error:"Messenger reported delivery failure"});}
+ private requiredAdapter(k:MessengerKind,id:string){const a=this.options.adapters.get(k,id);if(!a)throw new Error(`Adapter ${k}:${id} is not connected`);return a;}
+ private async resolveAccount(scope:string,data:any){const source=String(data?.source?.external_id??"");const account=source?await this.options.accounts.findByScopeAndSource(scope,source):await this.options.accounts.findByScope(scope);if(!account)throw new Error(`No messenger account mapped to scope/source ${scope}/${source}`);if(!account.amoScopeId)throw new Error(`Account ${account.id} has no scope`);return account;}
 }
 
-function amoPayload(message: NormalizedMessage, msgid: string, attachment: NormalizedAttachment | undefined, conversationRefId?: string): unknown {
-  if (attachment && !attachment.url) throw new Error(`Attachment ${attachment.id ?? msgid} has no amoCRM-reachable media URL; configure MediaStore`);
-  const type = attachment ? ({ image: "picture", video: "video", audio: "audio", voice: "voice", sticker: "sticker", file: "file", unknown: "file" } as const)[attachment.kind] : "text";
-  return { event_type: "new_message", payload: {
-    timestamp: Math.floor(message.occurredAt.getTime()/1000), msec_timestamp: message.occurredAt.getTime(), msgid,
-    conversation_id: message.conversationId, ...(conversationRefId ? { conversation_ref_id: conversationRefId } : {}),
-    sender: { id: message.sender.externalId, name: message.sender.displayName ?? message.sender.username ?? message.sender.externalId,
-      ...(message.sender.avatarUrl ? { avatar: message.sender.avatarUrl } : {}),
-      ...((message.sender.phone) ? { profile: { phone: message.sender.phone } } : {}) },
-    message: { type, text: attachment?.caption ?? message.text ?? "", ...(attachment?.url ? { media: attachment.url } : {}), ...(attachment?.fileName ? { file_name: attachment.fileName } : {}), ...(attachment?.size ? { file_size: attachment.size } : {}) },
-    silent: false,
-  }};
-}
-
-function amoWebhookAttachments(message: any): NormalizedAttachment[] {
-  if (!message?.media) return [];
-  const kind = ({ picture: "image", video: "video", audio: "audio", voice: "voice", sticker: "sticker", file: "file" } as const)[message.type as "picture"] ?? "unknown";
-  return [{ kind, url: message.media, fileName: message.file_name, size: message.file_size }];
-}
-function sha256(value: string): string { return createHash("sha256").update(value).digest("hex"); }
-function safeError(error: unknown): string { return error instanceof Error ? `${error.name}: ${error.message}` : "Unknown error"; }
+function amoPayload(m:NormalizedMessage,msgid:string,a:NormalizedAttachment|undefined,map:ConversationMapping,source:string){if(a&&!a.url)throw new Error(`Attachment ${a.id??msgid} has no amoCRM-reachable URL`);const type=a?({image:"picture",video:"video",audio:"audio",voice:"voice",sticker:"sticker",file:"file",unknown:"file"}as const)[a.kind]:"text";return{event_type:"new_message",payload:{timestamp:Math.floor(m.occurredAt.getTime()/1000),msec_timestamp:m.occurredAt.getTime(),msgid,conversation_id:m.conversationId,...(map.amoConversationId?{conversation_ref_id:map.amoConversationId}:{}),source:{external_id:source},sender:{id:m.sender.externalId,name:m.sender.displayName??m.sender.username??m.sender.externalId,...(m.sender.avatarUrl?{avatar:m.sender.avatarUrl}:{}),...(m.sender.phone?{profile:{phone:m.sender.phone}}:{})},message:{type,text:a?.caption??m.text??"",...(a?.url?{media:a.url}:{...((type!=="text")?{}:{})}),...(a&&type!=="audio"&&type!=="voice"&&type!=="sticker"?{file_name:a.fileName??`${msgid}.${extension(a.mimeType)}`,file_size:a.size}:{} )},silent:false}};}
+function amoWebhookAttachments(m:any):NormalizedAttachment[]{if(!m?.media)return[];const kind=({picture:"image",video:"video",audio:"audio",voice:"voice",sticker:"sticker",file:"file"}as any)[m.type]??"unknown";return[{kind,url:m.media,fileName:m.file_name,size:m.file_size}];}
+function resolveTemplate(config:Record<string,unknown>,amoTemplate:any):SendMessageCommand["template"]{if(!amoTemplate)return undefined;const mappings=(config.templateMappings??{}) as Record<string,any>;const key=String(amoTemplate.external_id??amoTemplate.id??amoTemplate.name??"");const m=mappings[key];if(!m)return undefined;return{name:String(m.name),languageCode:String(m.languageCode),components:m.components};}
+function within24Hours(at:Date|undefined,now:Date){return Boolean(at&&now.getTime()-at.getTime()<24*60*60*1000);}
+function normalizePhone(v:unknown){if(typeof v!=="string")return undefined;const d=v.replace(/\D/g,"");return d||undefined;}
+function required<T>(v:T|undefined,name:string):T{if(v===undefined)throw new Error(`Missing ${name}`);return v;}
+function extension(mime?:string){return mime?.split("/")[1]?.replace(/[^a-z0-9]/gi,"")||"bin";}
