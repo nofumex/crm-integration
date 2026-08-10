@@ -46,7 +46,6 @@ export interface SendMessageCommand {
   attachments?: NormalizedAttachment[];
   idempotencyKey: string;
   replyToId?: string;
-  template?: { name: string; languageCode: string; components?: unknown[] };
 }
 
 export interface SendResult {

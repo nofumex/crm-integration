@@ -1,5 +1,4 @@
 import"dotenv/config";
-import{createHmac,timingSafeEqual}from"node:crypto";
 import{Pool}from"pg";
 import{HeadBucketCommand,S3Client}from"@aws-sdk/client-s3";
 import{loadConfig}from"./config.js";import{createLogger}from"./logging.js";
@@ -22,12 +21,10 @@ if(c.AMOCRM_WRITES_ENABLED){const verifier=new AmoCrmRestClient({baseUrl:c.AMOCR
 const factory=new AdapterFactory(secrets,queue,media,c.MEDIA_MAX_BYTES);const supervisor=new ReconnectSupervisor(accounts,registry,factory,logger);await supervisor.reconcile();const router=new MessageRouter({store:mappings,accounts,adapters:registry,chats,contactResolver:resolver,mediaStore:media});const handlers=createRuntimeHandlers(router,registry);const onboarding=new TelegramOnboardingService(secrets,accounts);const accountManagement=new AccountManagementService(accounts,secrets);
 
 const app=buildWebhookServer({
- queue,amoChannelSecret:c.AMOCRM_CHATS_CHANNEL_SECRET,whatsappVerifyToken:c.WHATSAPP_WEBHOOK_VERIFY_TOKEN,
- verifyWhatsApp:async(raw,body,signature)=>{const phoneId=String(body?.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id??"");const account=phoneId?await accounts.findByProvider("whatsapp",phoneId):undefined;if(!account)return{valid:false};const credential=await secrets.get<{appSecret:string}>(account.credentialRef);if(!credential?.appSecret)return{valid:false};const expected=`sha256=${createHmac("sha256",credential.appSecret).update(raw).digest("hex")}`;return{valid:safeEqual(signature,expected),accountId:account.id};},
+ queue,amoChannelSecret:c.AMOCRM_CHATS_CHANNEL_SECRET,
  readiness:async()=>{try{await pool.query("SELECT 1");await s3.send(new HeadBucketCommand({Bucket:c.S3_BUCKET}),{abortSignal:AbortSignal.timeout(c.MEDIA_DOWNLOAD_TIMEOUT_MS)});const clam=await scanner.health();const jobs=await queue.counts();return{ready:clam,detail:{database:true,objectStorage:true,clamav:clam,jobs}};}catch(error){return{ready:false,detail:{error:error instanceof Error?error.message:"dependency failure"}};}},
  onboarding,accountManagement,lifecycle,mappings,deliveryReconciliation,adminToken:c.ADMIN_API_TOKEN,logger,bodyLimit:c.WEBHOOK_BODY_LIMIT_BYTES,rateLimitMax:c.WEBHOOK_RATE_LIMIT_PER_MINUTE,
 });
 const controller=new AbortController();const workers=Array.from({length:c.WORKER_CONCURRENCY},(_,i)=>new DurableWorker({queue,handlers,workerId:`${process.pid}-${i}`,leaseMs:c.WORKER_LEASE_MS,pollMs:c.WORKER_POLL_MS,infrastructureRetryMs:c.WORKER_INFRA_RETRY_MS,logger}).start(controller.signal));const retain=retentionLoop(queue,{payloadHours:c.COMPLETED_JOB_PAYLOAD_RETENTION_HOURS,completedDays:c.JOB_RETENTION_DAYS,deadDays:c.DEAD_JOB_RETENTION_DAYS,intervalMs:c.JOB_CLEANUP_INTERVAL_MS},controller.signal,logger);const supervise=supervisor.run(controller.signal).catch(error=>logger.error({error:error instanceof Error?error.message:"supervisor failed"},"supervisor stopped"));await app.listen({port:c.PORT,host:"0.0.0.0"});
 let stopping=false;async function shutdown(signal:string){if(stopping)return;stopping=true;logger.info({signal},"graceful shutdown");controller.abort();await app.close();await supervisor.shutdown();await Promise.race([Promise.allSettled([...workers,supervise,retain]),new Promise(r=>setTimeout(r,c.SHUTDOWN_TIMEOUT_MS))]);await pool.end();}
 process.once("SIGTERM",()=>void shutdown("SIGTERM"));process.once("SIGINT",()=>void shutdown("SIGINT"));
-function safeEqual(a?:string,b?:string){if(!a||!b||a.length!==b.length)return false;return timingSafeEqual(Buffer.from(a),Buffer.from(b));}

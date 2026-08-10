@@ -11,8 +11,8 @@ amoCRM REST API (OAuth)         amoCRM Chats API (HMAC-SHA1)
                           |
                    Adapter registry
                  /          |          \
-        Telegram MTProto  WhatsApp    MAX Personal (blocked: no first-party API)
-                         Cloud API   (access currently BLOCKED)
+        Telegram MTProto  WhatsApp Personal       MAX Personal
+                          (blocked: no API)        (blocked: no API)
 ```
 
 ## Границы и multi-account
@@ -35,9 +35,7 @@ REST и Chats API — разные клиенты и разные credentials. `
 
 Webhook amoCRM проверяется HMAC-SHA1 `X-Signature` по raw body и `channel_secret`. Отдельного webhook secret нет. Partition — scope + amo conversation; dedupe key — scope + amo message ID.
 
-Для существующего mapping adapter получает только сохранённые `provider_recipient_id` и `provider_conversation_id`. `receiver.id` amoCRM никогда не используется как messenger ID. При write-first account выбирается по `(scope_id, source.external_id)`, затем adapter официальным API резолвит телефон/username и сохраняет реальные provider IDs до отправки. MAX Personal не регистрируется в runtime до появления документированного first-party linked-device API/SDK MAX.
-
-WhatsApp free-form разрешается только внутри 24-hour window от `last_inbound_at`; вне окна требуется account-specific mapping одобренного template. Status webhooks обновляют mapping монотонно и передают delivered/read/failed в Chats API.
+Для существующего mapping adapter получает только сохранённые `provider_recipient_id` и `provider_conversation_id`. `receiver.id` amoCRM никогда не используется как messenger ID. При write-first account выбирается по `(scope_id, source.external_id)`, затем adapter официальным API резолвит телефон/username и сохраняет реальные provider IDs до отправки. WhatsApp Personal и MAX Personal не регистрируются в runtime до появления документированных first-party linked-device API/SDK соответствующего provider.
 
 ## Надёжность
 

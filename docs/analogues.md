@@ -46,7 +46,7 @@
 
 ## Другие релевантные решения и выводы
 
-Официальная карточка amoCRM для MAX описывает чат-бота, но это другой продукт и он исключён из текущего Definition of Done. Wazzup (`transport=max`) и ChatApp отдельно подтверждают personal linked-device QR; Wazzup отличает его от `maxbot`. Ни один из них не публикует MAX-side контракт. Для WhatsApp зрелые агрегаторы разделяют QR/linked-device и WABA/Cloud API; здесь используется второй. Для Telegram Personal используется полноценная MTProto client session.
+Официальная карточка amoCRM для MAX описывает чат-бота, но это другой продукт и он исключён из текущего Definition of Done. Wazzup (`transport=max`) и ChatApp отдельно подтверждают personal linked-device QR; Wazzup отличает его от `maxbot`. Ни один из них не публикует MAX-side контракт. Для WhatsApp зрелые агрегаторы разделяют QR/linked-device и WABA/Cloud API; целевой продукт требует первый вариант, но публичного first-party server API Meta для него нет. Сторонние агрегаторы и эмуляция WhatsApp Web protocol не используются. Для Telegram Personal используется полноценная MTProto client session.
 
 Источник: [amoCRM: MAX, неразобранное и источники](https://www.amocrm.ru/support/incoming_leads/max).
 

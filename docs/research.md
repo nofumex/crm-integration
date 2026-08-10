@@ -44,22 +44,13 @@ Session — фактически credential полного доступа. В п
 
 ## WhatsApp
 
-### Официальный production-путь
+Целевой transport — обычный WhatsApp Personal через «Связанные устройства». Официальное приложение поддерживает QR-привязку WhatsApp Web/Desktop, однако Meta не публикует API/SDK, позволяющий стороннему серверу зарегистрироваться linked device, хранить его cryptographic session, получать updates или отправлять сообщения.
 
-WhatsApp Business Platform / Cloud API. Нужны Meta app, WABA, зарегистрированный business phone number, `phone-number-id`, access token с `whatsapp_business_messaging`, webhook verification token и app secret. Отправка идёт через `POST https://graph.facebook.com/{version}/{phone-number-id}/messages`; входящие и статусы — HTTPS webhooks. Версия Graph API сделана обязательной конфигурацией, чтобы сервис не молча использовал устаревший default.
+Wazzup, Umnico, ChatApp и аналогичные сервисы публично показывают QR onboarding и reconnect. Wazzup отдельно документирует `whatsapp` channel, QR webhook и pairing code, но наружу предоставляет только собственный Partner API и не раскрывает WhatsApp-side cryptographic/network contract. Их техническая реализация является собственным транспортом сервиса либо закрытым соглашением; использовать их как посредника нельзя. Библиотеки Baileys, whatsapp-web.js и аналоги воспроизводят недокументированный WhatsApp Web protocol и поэтому исключены условиями проекта.
 
-Свободный текст разрешён в rolling 24-hour customer service window после входящего сообщения клиента. Вне окна business-initiated сообщение должно использовать заранее созданный и одобренный template. Router отслеживает последнее входящее сообщение и требует account-specific mapping одобренного template; adapter отправляет официальный template payload.
+Cloud API/WABA удалён из runtime и Definition of Done: это другой продукт. До письменного разрешения Meta и документированного first-party Linked Devices API/SDK создание WhatsApp account и runtime activation работают fail-closed. Условия WhatsApp запрещают неразрешённый автоматизированный доступ, reverse engineering и создание сторонних API с эквивалентной функциональностью.
 
-Media передаётся по предварительно загруженному media ID или публичной HTTPS-ссылке. Webhook даёт `wamid`, тип, sender и media ID; сам файл затем скачивается авторизованным запросом. Статусы `sent`, `delivered`, `read`, `failed` приходят отдельно и могут прийти не по порядку — сравнивать следует по timestamp и не понижать уже достигнутый статус.
-
-Существующий номер:
-
-- обычный personal WhatsApp не является допустимым номером Cloud API без перехода в Business/onboarding;
-- номер WhatsApp Business App обычно мигрируется/регистрируется в WABA;
-- официальный режим Coexistence позволяет некоторым подходящим Business App номерам работать с приложением и Cloud API одновременно, но доступность зависит от региона, типа аккаунта и onboarding/Tech Provider flow; это нужно проверить в конкретном Meta Business Portfolio;
-- QR, который подключает WhatsApp как «связанное устройство» через WhatsApp Web, не является публичным Business Platform API. Это неофициальный путь для personal/обычного приложения, с риском logout/ban/reconnect, и здесь не реализуется.
-
-Официальные источники: [Meta official WhatsApp Business Platform collection](https://www.postman.com/meta/whatsapp-business-platform/overview), [Messages API](https://www.postman.com/meta/whatsapp-business-platform/folder/o48mro7/messages), [Webhook payloads](https://www.postman.com/meta/whatsapp-business-platform/folder/tduohwq/webhook-payload-reference), [status notifications](https://www.postman.com/meta/whatsapp-business-platform/request/rgtfq23/message-status-update-notifications), [WhatsApp Business Platform features](https://business.whatsapp.com/products/business-platform-features).
+Источники: [WhatsApp: linking a device](https://faq.whatsapp.com/1317564962315842/), [WhatsApp Terms of Service](https://www.whatsapp.com/legal/terms-of-service), [публичный channel contract Wazzup](https://wazzup24.ru/help/api/channels/). Статус: **WHATSAPP PERSONAL: BLOCKED — FIRST-PARTY LINKED DEVICES API/SDK NOT AVAILABLE**.
 
 ## MAX
 

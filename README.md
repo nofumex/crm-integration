@@ -1,6 +1,6 @@
 # amoCRM Messenger Bridge
 
-TypeScript service integrating amoCRM Chats API with Telegram user accounts (MTProto) and WhatsApp Business Cloud API. MAX Bot API is not part of the product; MAX Personal activation is fail-closed until MAX publishes or grants a documented first-party linked-device API/SDK.
+TypeScript service integrating amoCRM Chats API with Telegram Personal (MTProto). WhatsApp Cloud/WABA and MAX Bot are outside the product. WhatsApp Personal and MAX Personal activation is fail-closed until their vendors publish or grant documented first-party linked-device APIs/SDKs.
 
 The checked-in implementation is deployable, but it is not labelled production-ready until real round-trip tests are completed on separate test accounts. Personal MAX is intentionally unsupported because no public official API exists.
 
@@ -21,7 +21,7 @@ Production storage is PostgreSQL; S3-compatible object storage and ClamAV are ma
 ## Runtime
 
 - `src/amocrm`: separate OAuth REST and HMAC Chats clients, lifecycle and contact/chat resolver.
-- `src/adapters`: account-specific Telegram, WhatsApp and MAX adapters.
+- `src/adapters`: account-specific Telegram adapter; unsupported Personal transports are refused explicitly.
 - `src/runtime`: encrypted onboarding, adapter factory and reconnect supervisor.
 - `src/queue`: PostgreSQL inbox/outbox, partition ordering, leases, retries and dead-letter.
 - `src/router`: normalized inbound/outbound flow using persisted provider IDs.

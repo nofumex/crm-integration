@@ -1,7 +1,6 @@
 import Fastify,{LogController,type FastifyInstance}from"fastify";
 import rateLimit from"@fastify/rate-limit";
 import{timingSafeEqual}from"node:crypto";
-import{createHash}from"node:crypto";
 import type{JobQueue}from"../queue/job-queue.js";
 import{verifyAmoWebhookSignature}from"../amocrm/chats-client.js";
 import type{TelegramOnboardingService}from"../runtime/telegram-onboarding.js";
@@ -11,8 +10,7 @@ import type{MappingStore}from"../storage/mapping-store.js";
 import type{DeliveryReconciliationStore}from"../storage/delivery-reconciliation.js";
 declare module"fastify"{interface FastifyRequest{rawBody?:string}}
 interface Options{
- queue:JobQueue;amoChannelSecret:string;whatsappVerifyToken?:string;
- verifyWhatsApp?:(raw:string,body:any,signature?:string)=>Promise<{valid:boolean;accountId?:string}>;
+ queue:JobQueue;amoChannelSecret:string;
  readiness?:()=>Promise<{ready:boolean;detail?:unknown}>;onboarding?:TelegramOnboardingService;
  accountManagement?:AccountManagementService;lifecycle?:AmoChatsLifecycle;adminToken?:string;
  mappings?:MappingStore;deliveryReconciliation?:DeliveryReconciliationStore;
@@ -25,8 +23,6 @@ export function buildWebhookServer(o:Options):FastifyInstance{
  app.get("/health/live",async()=>({ok:true}));
  app.get("/health/ready",async(_req,reply)=>{const r=await(o.readiness?.()??Promise.resolve({ready:true}));return reply.code(r.ready?200:503).send(r);});
  app.post("/webhooks/amocrm/:scopeId",async(req,reply)=>{const scopeId=String((req.params as any).scopeId);if(!verifyAmoWebhookSignature(req.rawBody??"",header(req,"x-signature"),o.amoChannelSecret))return reply.code(401).send({error:"invalid signature"});const body:any=req.body;const id=String(body?.message?.message?.id??"");const conversation=String(body?.message?.conversation?.id??"");if(!id||!conversation)return reply.code(400).send({error:"invalid payload"});await o.queue.enqueue({kind:"amocrm.outbound",partitionKey:`amo:${scopeId}:${conversation}`,dedupeKey:`${scopeId}:${id}`,payload:{scopeId,body}});return reply.code(200).send({ok:true});});
- app.get("/webhooks/whatsapp",async(req,reply)=>{const q=req.query as Record<string,string>;if(q["hub.mode"]==="subscribe"&&safeEqual(q["hub.verify_token"],o.whatsappVerifyToken))return reply.type("text/plain").send(q["hub.challenge"]);return reply.code(403).send();});
- app.post("/webhooks/whatsapp",async(req,reply)=>{if(!o.verifyWhatsApp)return reply.code(503).send();const raw=req.rawBody??"";const verified=await o.verifyWhatsApp(raw,req.body,header(req,"x-hub-signature-256"));if(!verified.valid||!verified.accountId)return reply.code(401).send({error:"invalid signature"});await o.queue.enqueue({kind:"messenger.inbound",partitionKey:`whatsapp:${verified.accountId}:webhook`,dedupeKey:`${verified.accountId}:webhook:${createHash("sha256").update(raw).digest("hex")}`,payload:{adapterWebhook:true,messenger:"whatsapp",accountId:verified.accountId,body:req.body}});return reply.code(200).send({ok:true});});
  if(o.onboarding){app.post("/admin/telegram/onboarding",{preHandler:admin(o.adminToken)},async(req,reply)=>reply.code(202).send(await o.onboarding!.start(req.body as any)));app.post("/admin/telegram/onboarding/:accountId/code",{preHandler:admin(o.adminToken)},async req=>o.onboarding!.submitCode(String((req.params as any).accountId),String((req.body as any).code)));app.post("/admin/telegram/onboarding/:accountId/password",{preHandler:admin(o.adminToken)},async req=>o.onboarding!.submitPassword(String((req.params as any).accountId),String((req.body as any).password)));}
  if(o.accountManagement)app.post("/admin/accounts",{preHandler:admin(o.adminToken)},async(req,reply)=>reply.code(201).send(await o.accountManagement!.create(req.body as any)));
  app.get("/admin/jobs/dead",{preHandler:admin(o.adminToken)},async req=>o.queue.deadLetters(Math.min(500,Number((req.query as any)?.limit??100))));
