@@ -196,10 +196,6 @@ export function buildWebhookServer(o: Options): FastifyInstance {
     app.post("/admin/accounts/:accountId/amocrm/connect", { preHandler: admin(o.adminToken) }, async (req) => ({
       scopeId: await o.lifecycle!.connectAccount(String((req.params as any).accountId), (req.body as any)?.title),
     }));
-    app.post("/admin/accounts/:accountId/amocrm/source", { preHandler: admin(o.adminToken) }, async (req) => {
-      await o.lifecycle!.ensureSource(String((req.params as any).accountId), (req.body as any)?.pipelineId);
-      return { ok: true };
-    });
   }
 
   return app;
