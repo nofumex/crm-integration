@@ -1,5 +1,6 @@
 import { SafeHttpClient, type HttpTransport } from "../http/safe-http-client.js";
 import { ReadOnlyViolationError } from "../core/errors.js";
+import { HttpError } from "../http/http-error.js";
 
 export interface AmoRestClientOptions {
   baseUrl: string;
@@ -7,6 +8,7 @@ export interface AmoRestClientOptions {
   tokenProvider?: {getAccessToken():Promise<string>};
   readOnly?: boolean;
   transport?: HttpTransport;
+  logger?: {error(data:unknown,message?:string):void};
 }
 
 export class AmoCrmRestClient {
@@ -14,10 +16,11 @@ export class AmoCrmRestClient {
   private readonly tokenProvider:{getAccessToken():Promise<string>};
   private readonly readOnly:boolean;
   private readonly baseUrl:string;
+  private readonly logger?:{error(data:unknown,message?:string):void};
 
   constructor(options: AmoRestClientOptions) {
     if(!options.accessToken&&!options.tokenProvider)throw new Error("amoCRM access token provider is required");
-    this.readOnly=options.readOnly??true;this.baseUrl=options.baseUrl;
+    this.readOnly=options.readOnly??true;this.baseUrl=options.baseUrl;this.logger=options.logger;
     this.tokenProvider=options.tokenProvider??{getAccessToken:async()=>options.accessToken!};
     this.http = new SafeHttpClient({
       baseUrl: options.baseUrl,
@@ -49,8 +52,9 @@ export class AmoCrmRestClient {
   findSources(externalId:string):Promise<any>{return this.request("GET",`/api/v4/sources?filter[external_id][]=${encodeURIComponent(externalId)}`);}
   createSources(sources:Array<{name:string;external_id:string;pipeline_id?:number;default?:boolean;services?:unknown[]}>):Promise<any>{return this.request("POST","/api/v4/sources",sources);}
 
-  linkChatToContact(contactId: number, chatId: string): Promise<unknown> {
-    return this.request("POST", "/api/v4/contacts/chats", [{ contact_id: contactId, chat_id: chatId }]);
+  async linkChatToContact(contactId: number, chatId: string): Promise<unknown> {
+    try{return await this.request("POST", "/api/v4/contacts/chats", [{ contact_id: contactId, chat_id: chatId }]);}
+    catch(error){if(error instanceof HttpError)this.logger?.error({status:error.status,endpoint:"/api/v4/contacts/chats",responseBody:error.responseBody},"amoCRM contact chat linking failed");throw error;}
   }
 
   patchContact(contactId: number, patch: unknown): Promise<unknown> {

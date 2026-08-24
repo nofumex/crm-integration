@@ -3,6 +3,7 @@ import { SafeHttpClient } from "../src/http/safe-http-client.js";
 import { ReadOnlyViolationError } from "../src/core/errors.js";
 import { AmoCrmRestClient } from "../src/amocrm/rest-client.js";
 import { AmoCrmChatsClient } from "../src/amocrm/chats-client.js";
+import { HttpError } from "../src/http/http-error.js";
 
 describe("amoCRM read-only safety layer", () => {
   for (const method of ["POST", "PATCH", "PUT", "DELETE"]) {
@@ -21,12 +22,16 @@ describe("amoCRM read-only safety layer", () => {
     expect(transport).toHaveBeenCalledOnce();
   });
 
+  it.each([400,401,403,422])("keeps safe amoCRM error diagnostics for HTTP %i",async(status)=>{const transport=vi.fn(async()=>new Response(JSON.stringify({title:"validation failed",access_token:"must-not-log"}),{status,headers:{"content-type":"application/problem+json"}}));const client=new SafeHttpClient({baseUrl:"https://production.amocrm.ru",readOnly:false,transport});let error:HttpError|undefined;try{await client.request("POST","/api/v4/contacts/chats",{body:"[]"});}catch(value){error=value as HttpError;}expect(error).toMatchObject({status,responseContentType:"application/problem+json",safeMessage:`HTTP request failed with status ${status}`});expect(error?.responseBody).toContain("validation failed");expect(error?.responseBody).not.toContain("must-not-log");});
+
   it("REST write helper cannot bypass the guard", async () => {
     const transport = vi.fn();
     const client = new AmoCrmRestClient({ baseUrl: "https://production.amocrm.ru", accessToken: "secret", transport });
     await expect(client.linkChatToContact(1, "chat")).rejects.toBeInstanceOf(ReadOnlyViolationError);
     expect(transport).not.toHaveBeenCalled();
   });
+
+  it("logs only safe amoCRM response diagnostics for contact chat link failures",async()=>{const logger={error:vi.fn()};const transport=vi.fn(async()=>new Response(JSON.stringify({detail:"chat cannot be linked",client_secret:"must-not-log"}),{status:400,headers:{"content-type":"application/json"}}));const client=new AmoCrmRestClient({baseUrl:"https://production.amocrm.ru",accessToken:"secret",readOnly:false,transport,logger});await expect(client.linkChatToContact(1,"chat")).rejects.toMatchObject({status:400,responseContentType:"application/json"});expect(logger.error).toHaveBeenCalledWith({status:400,endpoint:"/api/v4/contacts/chats",responseBody:expect.stringContaining("chat cannot be linked")},"amoCRM contact chat linking failed");expect(JSON.stringify(logger.error.mock.calls)).not.toContain("must-not-log");expect(JSON.stringify(logger.error.mock.calls)).not.toContain("secret\"");});
 
   it("blocks REST writes before even asking a refresh-capable token provider",async()=>{const tokenProvider={getAccessToken:vi.fn(async()=>"token")};const client=new AmoCrmRestClient({baseUrl:"https://production.amocrm.ru",tokenProvider});await expect(client.patchContact(1,{})).rejects.toBeInstanceOf(ReadOnlyViolationError);expect(tokenProvider.getAccessToken).not.toHaveBeenCalled();});
 

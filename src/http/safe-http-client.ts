@@ -43,7 +43,7 @@ export class SafeHttpClient {
     });
     if (!response.ok) {
       const body = await response.text();
-      throw new HttpError(response.status,normalizedMethod,url,parseRetryAfter(response.headers.get("retry-after")),body.slice(0,500));
+      throw new HttpError(response.status,normalizedMethod,url,parseRetryAfter(response.headers.get("retry-after")),safeResponseBody(body),response.headers.get("content-type")??undefined);
     }
     if (response.status === 204) return undefined as T;
     return (await response.json()) as T;
@@ -51,3 +51,5 @@ export class SafeHttpClient {
 }
 
 function parseRetryAfter(value:string|null):number|undefined{if(!value)return undefined;const seconds=Number(value);if(Number.isFinite(seconds))return Math.max(0,seconds*1000);const date=Date.parse(value);return Number.isFinite(date)?Math.max(0,date-Date.now()):undefined;}
+function safeResponseBody(body:string):string{const limited=body.slice(0,64_000);try{return JSON.stringify(redact(JSON.parse(limited)));}catch{const lowered=limited.toLowerCase();return["access_token","refresh_token","client_secret","authorization","cookie","api_hash"].some(key=>lowered.includes(key))?"[non-JSON error response redacted]":limited;}}
+function redact(value:unknown):unknown{if(Array.isArray(value))return value.map(redact);if(value&&typeof value==="object")return Object.fromEntries(Object.entries(value as Record<string,unknown>).map(([key,item])=>[/^(access|refresh)[_-]?token$/i,/^client[_-]?secret$/i,/^authorization$/i,/^(cookie|set-cookie)$/i,/^api[_-]?hash$/i].some(pattern=>pattern.test(key))?[key,"[REDACTED]"]:[key,redact(item)]));return value;}
