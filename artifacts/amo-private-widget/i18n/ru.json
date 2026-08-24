@@ -1,0 +1,7 @@
+{
+  "widget": {
+    "name": "SinaiTelegram Sources",
+    "description": "Служебный виджет для поддержки нескольких источников Telegram.",
+    "short_description": "Поддержка нескольких Telegram-источников."
+  }
+}
