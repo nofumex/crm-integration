@@ -43,6 +43,8 @@ export class AmoCrmRestClient {
     return this.request("GET", `/api/v4/sources?limit=${limit}`);
   }
   searchContacts(query:string):Promise<any>{return this.request("GET",`/api/v4/contacts?query=${encodeURIComponent(query)}&with=leads&limit=50`);}
+  getContact(contactId:number):Promise<any>{return this.request("GET",`/api/v4/contacts/${contactId}?with=leads`);}
+  createContact(contact:unknown):Promise<any>{return this.request("POST","/api/v4/contacts",[contact]);}
   getContactChats(contactId:number):Promise<any>{return this.request("GET",`/api/v4/contacts/chats?contact_id[]=${contactId}`);}
   findSources(externalId:string):Promise<any>{return this.request("GET",`/api/v4/sources?filter[external_id][]=${encodeURIComponent(externalId)}`);}
   createSources(sources:Array<{name:string;external_id:string;pipeline_id?:number;default?:boolean;services?:unknown[]}>):Promise<any>{return this.request("POST","/api/v4/sources",sources);}
