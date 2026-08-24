@@ -256,6 +256,7 @@
             <div class="actions">
               ${!acc.amoScopeId ? `<button class="btn btn-secondary btn-sm" data-action="amocrm-connect">Подключить amoCRM</button>` : ""}
               ${acc.amoScopeId && bootstrap?.chatsChannelConfigured ? `<button class="btn btn-secondary btn-sm" data-action="amocrm-source">Создать source</button>` : ""}
+              ${acc.messenger === "telegram" && acc.state === "reconnect_required" ? `<button class="btn btn-primary btn-sm" data-action="reauthorize">Авторизовать заново</button>` : ""}
               <button class="btn btn-secondary btn-sm" data-action="reconnect">Reconnect</button>
               <button class="btn btn-danger btn-sm" data-action="disconnect">Disconnect</button>
             </div>
@@ -299,6 +300,9 @@
           await api(`/admin/accounts/${accountId}/disconnect`, { method: "POST" });
         } else if (action === "reconnect") {
           await api(`/admin/accounts/${accountId}/reconnect`, { method: "POST" });
+        } else if (action === "reauthorize") {
+          openWizard(accounts.find(a => a.id === accountId));
+          return;
         } else if (action === "amocrm-connect") {
           const r = await api(`/admin/accounts/${accountId}/amocrm/connect`, { method: "POST", body: "{}" });
           alert(`amoCRM подключён. scope_id: ${r.scopeId}`);
@@ -326,14 +330,14 @@
       show($("wizard-error"), false);
     }
 
-    function openWizard() {
-      wizard = { step: 1, accountId: null };
-      $("w-phone").value = "";
-      $("w-display").value = "";
+    function openWizard(account) {
+      wizard = { step: 1, accountId: account?.id || null };
+      $("w-phone").value = account?.phone || "";
+      $("w-display").value = account?.displayName || "";
       $("w-api-id").value = "";
       $("w-api-hash").value = "";
-      $("w-amo-id").value = bootstrap?.amoAccountIdDefault || "";
-      $("w-source").value = bootstrap?.sourceExternalIdDefault || "";
+      $("w-amo-id").value = account?.amoAccountId || bootstrap?.amoAccountIdDefault || "";
+      $("w-source").value = account?.sourceExternalId || bootstrap?.sourceExternalIdDefault || "";
       $("w-code").value = "";
       $("w-password").value = "";
       setWizardStep(1);
@@ -347,6 +351,7 @@
 
     async function startOnboarding() {
       const body = {
+        accountId: wizard.accountId || undefined,
         phone: $("w-phone").value.trim(),
         apiId: Number($("w-api-id").value),
         apiHash: $("w-api-hash").value.trim(),
