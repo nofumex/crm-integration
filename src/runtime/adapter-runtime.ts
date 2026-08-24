@@ -5,6 +5,7 @@ import { TelegramAdapter } from "../adapters/telegram-adapter.js";
 import type { SecretStore } from "../security/secret-store.js";
 import type { JobQueue } from "../queue/job-queue.js";
 import type { MediaStore } from "../media/media-store.js";
+import { storeTelegramPeer } from "./telegram-peer-secrets.js";
 
 type TelegramSecret={apiId:number;apiHash:string;session:string;authorized?:boolean};
 export class WhatsAppPersonalUnavailableError extends Error{constructor(){super("WhatsApp Personal has no public, documented first-party Linked Devices API/SDK; runtime activation is refused");this.name="WhatsAppPersonalUnavailableError";}}
@@ -22,7 +23,7 @@ export class AdapterFactory {
   return adapter;
  }
  private async required<T extends Record<string,unknown>>(id:string):Promise<T>{const value=await this.secrets.get<T>(id);if(!value)throw new Error(`Credential reference ${id} was not found`);return value;}
- private async enqueueInbound(message:NormalizedMessage):Promise<void>{await this.queue.enqueue({kind:"messenger.inbound",partitionKey:`${message.messenger}:${message.accountId}:${message.conversationId}`,dedupeKey:`${message.accountId}:${message.conversationId}:${message.id}`,payload:{...message,occurredAt:message.occurredAt.toISOString(),raw:undefined}});}
+ private async enqueueInbound(message:NormalizedMessage):Promise<void>{let safe=message;if(message.messenger==="telegram"&&message.sender.recipientReference){const recipientSecretRef=await storeTelegramPeer(this.secrets,message.accountId,message.sender.recipientReference);const {recipientReference,...sender}=message.sender;safe={...message,sender:{...sender,recipientSecretRef}};}await this.queue.enqueue({kind:"messenger.inbound",partitionKey:`${safe.messenger}:${safe.accountId}:${safe.conversationId}`,dedupeKey:`${safe.accountId}:${safe.conversationId}:${safe.id}`,payload:{...safe,occurredAt:safe.occurredAt.toISOString(),raw:undefined}});}
 }
 
 export class ReconnectSupervisor {

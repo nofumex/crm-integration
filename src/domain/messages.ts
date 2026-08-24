@@ -21,6 +21,8 @@ export interface NormalizedParticipant {
   avatarUrl?: string;
   /** Safe Telegram peer data needed to address this user after an adapter restart. */
   recipientReference?: TelegramRecipientReference;
+  /** Encrypted SecretStore key containing recipientReference; safe to put in a job. */
+  recipientSecretRef?: string;
   /** Safe, provider-supplied profile fields. This is never an MTProto session. */
   profile?: TelegramProfile;
 }
@@ -32,6 +34,7 @@ export interface TelegramRecipientReference {
 }
 
 export interface TelegramProfile {
+  telegramId: string;
   firstName?: string;
   lastName?: string;
   username?: string;

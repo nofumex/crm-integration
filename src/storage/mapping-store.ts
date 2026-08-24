@@ -6,6 +6,7 @@ export interface ConversationMapping {
   providerConversationId?: string;
   providerRecipientId: string;
   providerRecipientRef?: TelegramRecipientReference;
+  providerRecipientSecretRef?: string;
   providerProfile?: TelegramProfile;
   amoConversationId?: string;
   amoContactId?: number;

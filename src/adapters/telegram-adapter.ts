@@ -75,8 +75,15 @@ export class TelegramAdapter implements MessengerAdapter {
 
   async resolveRecipient(identifier:{phone?:string;username?:string}):Promise<{providerRecipientId:string;providerConversationId:string;providerRecipientRef?:TelegramRecipientReference;providerProfile?:TelegramProfile}>{
     const value=identifier.username??identifier.phone;if(!value)throw new Error("Telegram recipient phone or username is required");
-    const entity:any=await withTimeout(this.client.getEntity(value),this.timeout());const participant=telegramParticipant(entity,String(entity?.id??value));
+    const entity:any=await withTimeout(this.client.getEntity(value),this.timeout());const inputPeer=await withTimeout(this.client.getInputEntity(entity),this.timeout());const participant=telegramParticipant(entity,String(entity?.id??value),inputPeer);
     return{providerRecipientId:participant.externalId,providerConversationId:participant.externalId,providerRecipientRef:participant.recipientReference,providerProfile:participant.profile};
+  }
+
+  async resolveRecipientById(providerRecipientId:string):Promise<{providerRecipientRef:TelegramRecipientReference;providerProfile?:TelegramProfile}>{
+    let entity:any;let inputPeer:any;
+    try { inputPeer=await withTimeout(this.client.getInputEntity(providerRecipientId),this.timeout());entity=await withTimeout(this.client.getEntity(inputPeer),this.timeout()); }
+    catch { for await (const dialog of (this.client as any).iterDialogs({})){if(!dialog?.isUser||String(dialog.entity?.id)!==providerRecipientId)continue;entity=dialog.entity;inputPeer=dialog.inputEntity;break;} }
+    const participant=telegramParticipant(entity,providerRecipientId,inputPeer);if(!participant.recipientReference)throw new TelegramRecipientResolutionError();return{providerRecipientRef:participant.recipientReference,providerProfile:participant.profile};
   }
 
   async send(command: SendMessageCommand): Promise<SendResult> {
@@ -96,8 +103,8 @@ export class TelegramAdapter implements MessengerAdapter {
       const chatId = String(msg.chatId ?? msg.peerId?.userId ?? msg.peerId?.chatId ?? msg.peerId?.channelId);
       const senderId = String(msg.senderId ?? msg.peerId?.userId ?? "unknown");
       let sender:NormalizedParticipant;
-      try { sender=telegramParticipant(await withTimeout(this.client.getEntity(msg.senderId ?? senderId),this.timeout()),senderId); }
-      catch { sender=telegramParticipant(undefined,senderId); }
+      try { const entity=await withTimeout(this.client.getEntity(msg.senderId ?? senderId),this.timeout());sender=telegramParticipant(entity,senderId,await withTimeout(this.client.getInputEntity(entity),this.timeout())); }
+      catch { try { sender=telegramParticipant(undefined,senderId,await withTimeout(this.client.getInputEntity(msg.senderId ?? senderId),this.timeout())); } catch { sender=telegramParticipant(undefined,senderId); } }
       const attachments: NormalizedAttachment[] = msg.media ? [{ kind: inferTelegramMediaKind(msg.media), id: String(msg.id) }] : [];
       if (msg.media && this.options.mediaStore) {
         const declaredSize=Number(msg.media?.document?.size??0);if(declaredSize>(this.options.maxMediaBytes??25*1024*1024))throw new Error("Telegram media exceeds size limit");
@@ -131,13 +138,14 @@ export class TelegramAdapter implements MessengerAdapter {
   }
 }
 
-function telegramParticipant(entity:any,fallbackId:string):NormalizedParticipant{
+function telegramParticipant(entity:any,fallbackId:string,inputPeer?:any):NormalizedParticipant{
   const externalId=String(entity?.id??fallbackId);
   const firstName=nonEmpty(entity?.firstName),lastName=nonEmpty(entity?.lastName),username=nonEmpty(entity?.username),phone=nonEmpty(entity?.phone);
   const name=[firstName,lastName].filter(Boolean).join(" ");
-  const profile:TelegramProfile={...(firstName?{firstName}:{}),...(lastName?{lastName}:{}),...(username?{username}:{}),...(phone?{phone}:{}),...(typeof entity?.bot==="boolean"?{isBot:entity.bot}:{})};
-  const accessHash=entity?.accessHash;
-  return {externalId,displayName:name||username||externalId,...(username?{username}:{}),...(phone?{phone}:{}),...(accessHash!==undefined?{recipientReference:{kind:"telegram_input_peer_user",userId:externalId,accessHash:String(accessHash)}}:{}),...(Object.keys(profile).length?{profile}:{})};
+  const profile:TelegramProfile={telegramId:externalId,...(firstName?{firstName}:{}),...(lastName?{lastName}:{}),...(username?{username}:{}),...(phone?{phone}:{}),...(typeof entity?.bot==="boolean"?{isBot:entity.bot}:{})};
+  const accessHash=inputPeer?.className==="InputPeerUser"?inputPeer.accessHash:entity?.accessHash;
+  const userId=inputPeer?.className==="InputPeerUser"?String(inputPeer.userId):externalId;
+  return {externalId,displayName:name||username||externalId,...(username?{username}:{}),...(phone?{phone}:{}),...(accessHash!==undefined?{recipientReference:{kind:"telegram_input_peer_user",userId,accessHash:String(accessHash)}}:{}),...(Object.keys(profile).length?{profile}:{})};
 }
 function nonEmpty(value:unknown):string|undefined{return typeof value==="string"&&value.trim()?value.trim():undefined;}
 

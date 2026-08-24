@@ -23,4 +23,4 @@ export class UnsupportedOperationError extends Error {
 export class DeliveryUnknownError extends Error {constructor(message="Provider delivery result is unknown",options?:ErrorOptions){super(message,options);this.name="DeliveryUnknownError";}}
 
 /** A recipient was never cached by MTProto and no persisted InputPeer is available. */
-export class TelegramRecipientResolutionError extends Error {constructor(){super("Telegram recipient is unavailable; wait for a new incoming message or start a new conversation");this.name="TelegramRecipientResolutionError";}}
+export class TelegramRecipientResolutionError extends Error {constructor(){super("Telegram recipient metadata is unavailable; outbound cannot be delivered");this.name="TelegramRecipientResolutionError";}}

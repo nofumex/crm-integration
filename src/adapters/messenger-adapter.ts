@@ -13,6 +13,7 @@ export interface MessengerAdapter {
   onStatus(handler: StatusHandler): void;
   health(accountId: string): Promise<{ connected: boolean; detail?: string }>;
   resolveRecipient(identifier: { phone?: string; username?: string }): Promise<{ providerRecipientId: string; providerConversationId: string; providerRecipientRef?: TelegramRecipientReference; providerProfile?: import("../domain/messages.js").TelegramProfile }>;
+  resolveRecipientById?(providerRecipientId:string):Promise<{ providerRecipientRef: TelegramRecipientReference; providerProfile?: import("../domain/messages.js").TelegramProfile }>;
 }
 
 export interface AdapterRegistry { get(kind:MessengerKind,accountId:string):MessengerAdapter|undefined; all():MessengerAdapter[]; }
