@@ -67,7 +67,7 @@ export class AmoCrmChatsClient {
 
 export function verifyAmoWebhookSignature(rawBody: string, signature: string | undefined, secret: string): boolean {
   if (!signature) return false;
-  const expected = createHmac("sha1", secret).update(rawBody).digest("hex");
+  const expected = createHmac("sha1", secret).update(rawBody.trim()).digest("hex");
   const received = signature.toLowerCase();
   if (received.length !== expected.length) return false;
   return timingSafeEqual(Buffer.from(received), Buffer.from(expected));

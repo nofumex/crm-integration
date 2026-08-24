@@ -16,10 +16,19 @@ describe("amoCRM Chats signing", () => {
     expect(new Headers(init.headers).get("x-signature")).toBe(expected);
   });
 
-  it("verifies webhook raw-body HMAC without leaking the secret", () => {
+  it("verifies a webhook body without trailing whitespace", () => {
     const body = '{"message":{"message":{"id":"1"}}}';
     const signature = createHmac("sha1", "hook-secret").update(body).digest("hex");
     expect(verifyAmoWebhookSignature(body, signature, "hook-secret")).toBe(true);
-    expect(verifyAmoWebhookSignature(body + " ", signature, "hook-secret")).toBe(false);
+  });
+
+  it("verifies a webhook body with trailing whitespace against its trimmed HMAC", () => {
+    const body = '{"message":{"message":{"id":"1"}}}';
+    const signature = createHmac("sha1", "hook-secret").update(body).digest("hex");
+    expect(verifyAmoWebhookSignature(`${body}\n  `, signature.toUpperCase(), "hook-secret")).toBe(true);
+  });
+
+  it("rejects an invalid webhook signature", () => {
+    expect(verifyAmoWebhookSignature('{"message":{}}', "not-a-valid-signature", "hook-secret")).toBe(false);
   });
 });
