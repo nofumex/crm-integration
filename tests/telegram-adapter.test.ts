@@ -1,13 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { TelegramAdapter } from "../src/adapters/telegram-adapter.js";
 import type { NormalizedMessage } from "../src/domain/messages.js";
+import { TelegramRecipientResolutionError } from "../src/core/errors.js";
 
 describe("Telegram MTProto adapter", () => {
   it("resolves a persisted Telegram InputPeer before sending instead of passing a raw numeric ID", async () => {
     let eventHandler: ((event: unknown) => Promise<void>) | undefined;
     const fake = { connected:true, session:{save:()=>"new-session"}, connect:vi.fn(async()=>undefined), disconnect:vi.fn(async()=>undefined), isUserAuthorized:vi.fn(async()=>true), addEventHandler:vi.fn((handler:typeof eventHandler)=>{eventHandler=handler;}), getEntity:vi.fn(async()=>({id:77123,accessHash:"9988",firstName:"Ada",lastName:"Lovelace",username:"ada",phone:"+79990000000",bot:false})), getInputEntity:vi.fn(async(entity)=>({resolved:entity})), sendMessage:vi.fn(async()=>({id:55,date:1_700_000_000})), sendFile:vi.fn(), downloadMedia:vi.fn(), start:vi.fn() };
     const adapter=new TelegramAdapter({accountId:"tg-1",apiId:1,apiHash:"hash",session:"ciphertext-loaded-by-secret-store",client:fake as any});const inbound=vi.fn(async()=>undefined);adapter.onInbound(inbound);await adapter.connect("tg-1");
-    expect(await adapter.resolveRecipient({username:"client"})).toMatchObject({providerRecipientId:"77123",providerConversationId:"77123",providerRecipientRef:{kind:"telegram_input_peer_user",userId:"77123",accessHash:"9988"}});
+    expect(await adapter.resolveRecipient({phone:"+79990000000"})).toMatchObject({providerRecipientId:"77123",providerConversationId:"77123",providerRecipientRef:{kind:"telegram_input_peer_user",userId:"77123",accessHash:"9988"}});
     await adapter.send({accountId:"tg-1",conversationId:"77123",recipientId:"77123",recipientReference:{kind:"telegram_input_peer_user",userId:"77123",accessHash:"9988"},text:"hello",idempotencyKey:"amo-1"});
     expect(fake.getInputEntity).toHaveBeenCalledWith(expect.objectContaining({className:"InputPeerUser",userId:"77123",accessHash:"9988"}));
     expect(fake.sendMessage).toHaveBeenCalledWith(expect.objectContaining({resolved:expect.objectContaining({className:"InputPeerUser"})}),{message:"hello"});
@@ -29,4 +30,7 @@ describe("Telegram MTProto adapter", () => {
     const adapter=new TelegramAdapter({accountId:"tg-1",apiId:1,apiHash:"hash",session:"session",client:fake as any});
     await expect(adapter.send({accountId:"tg-1",conversationId:"7727079839",recipientId:"7727079839",text:"hello",idempotencyKey:"amo"})).rejects.toThrow("Telegram recipient metadata is unavailable");expect(fake.sendMessage).not.toHaveBeenCalled();
   });
+
+  it("resolves a phone through contacts.resolvePhone when getEntity has no cached entity",async()=>{const user={id:42,accessHash:"peer-hash",firstName:"Phone",lastName:"User",phone:"+79991234567"};const fake={connected:true,session:{save:()=>""},connect:async()=>{},disconnect:async()=>{},isUserAuthorized:async()=>true,addEventHandler:()=>{},getEntity:vi.fn(async()=>{throw new Error("uncached");}),getInputEntity:vi.fn(async(entity:any)=>({className:"InputPeerUser",userId:String(entity.id),accessHash:entity.accessHash})),invoke:vi.fn(async()=>({peer:{className:"PeerUser",userId:42},users:[user]}))};const adapter=new TelegramAdapter({accountId:"tg-1",apiId:1,apiHash:"hash",session:"session",client:fake as any});await expect(adapter.resolveRecipient({phone:"+79991234567"})).resolves.toMatchObject({providerRecipientId:"42",providerConversationId:"42",providerRecipientRef:{kind:"telegram_input_peer_user",userId:"42",accessHash:"peer-hash"},providerProfile:{telegramId:"42",firstName:"Phone",lastName:"User",phone:"+79991234567"}});expect(fake.invoke).toHaveBeenCalledWith(expect.objectContaining({className:"contacts.ResolvePhone",phone:"+79991234567"}));});
+  it("returns a recipient resolution error when Telegram cannot resolve a phone",async()=>{const fake={connected:true,session:{save:()=>""},connect:async()=>{},disconnect:async()=>{},isUserAuthorized:async()=>true,addEventHandler:()=>{},getEntity:vi.fn(async()=>{throw new Error("uncached");}),invoke:vi.fn(async()=>{throw new Error("PHONE_NOT_OCCUPIED");})};const adapter=new TelegramAdapter({accountId:"tg-1",apiId:1,apiHash:"hash",session:"session",client:fake as any});await expect(adapter.resolveRecipient({phone:"+79991234567"})).rejects.toBeInstanceOf(TelegramRecipientResolutionError);});
 });

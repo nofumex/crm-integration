@@ -75,7 +75,18 @@ export class TelegramAdapter implements MessengerAdapter {
 
   async resolveRecipient(identifier:{phone?:string;username?:string}):Promise<{providerRecipientId:string;providerConversationId:string;providerRecipientRef?:TelegramRecipientReference;providerProfile?:TelegramProfile}>{
     const value=identifier.username??identifier.phone;if(!value)throw new Error("Telegram recipient phone or username is required");
-    const entity:any=await withTimeout(this.client.getEntity(value),this.timeout());const inputPeer=await withTimeout(this.client.getInputEntity(entity),this.timeout());const participant=telegramParticipant(entity,String(entity?.id??value),inputPeer);
+    try{const entity:any=await withTimeout(this.client.getEntity(value),this.timeout());const inputPeer=await withTimeout(this.client.getInputEntity(entity),this.timeout());const participant=telegramParticipant(entity,String(entity?.id??value),inputPeer);return{providerRecipientId:participant.externalId,providerConversationId:participant.externalId,providerRecipientRef:participant.recipientReference,providerProfile:participant.profile};}
+    catch{if(!identifier.phone)throw new TelegramRecipientResolutionError();return this.resolveRecipientByPhone(identifier.phone);}
+  }
+
+  private async resolveRecipientByPhone(phone:string):Promise<{providerRecipientId:string;providerConversationId:string;providerRecipientRef?:TelegramRecipientReference;providerProfile?:TelegramProfile}>{
+    let resolved:any;
+    try{resolved=await withTimeout((this.client as any).invoke(new Api.contacts.ResolvePhone({phone})),this.timeout());}
+    catch{throw new TelegramRecipientResolutionError();}
+    const peerUserId=resolved?.peer?.userId;const entity=(resolved?.users??[]).find((user:any)=>String(user?.id)===String(peerUserId));
+    if(!entity)throw new TelegramRecipientResolutionError();
+    let inputPeer:any;try{inputPeer=await withTimeout(this.client.getInputEntity(entity),this.timeout());}catch{throw new TelegramRecipientResolutionError();}
+    const participant=telegramParticipant(entity,String(peerUserId),inputPeer);if(!participant.recipientReference)throw new TelegramRecipientResolutionError();
     return{providerRecipientId:participant.externalId,providerConversationId:participant.externalId,providerRecipientRef:participant.recipientReference,providerProfile:participant.profile};
   }
 
