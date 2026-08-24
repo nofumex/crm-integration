@@ -18,6 +18,20 @@ npm start
 
 Production storage is PostgreSQL; S3-compatible object storage and ClamAV are mandatory. The server will not start with an incomplete config or an unapplied schema. Readiness checks PostgreSQL, object storage and ClamAV.
 
+## Self-hosted deployment (Docker Compose)
+
+Full step-by-step guide: [deploy/DEPLOY.md](deploy/DEPLOY.md)
+
+Quick start on VPS:
+
+```bash
+cp deploy/.env.production.example .env
+# edit .env — set PUBLIC_DOMAIN, secrets, amoCRM tokens
+docker compose up -d --build
+```
+
+After DNS points to the VPS, open `https://YOUR_DOMAIN/admin` to connect Telegram accounts. amoCRM Chats `channel_id` / `channel_secret` can be added to `.env` after amoCRM registration — the service starts without them and exposes the webhook URL template in the admin UI.
+
 ## Runtime
 
 - `src/amocrm`: separate OAuth REST and HMAC Chats clients, lifecycle and contact/chat resolver.

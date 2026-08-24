@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node -e \"require('node:fs').cpSync('public','dist/public',{recursive:true})\"",
     "start": "node dist/src/server.js",
     "dev": "tsx watch src/server.ts",
     "migrate": "tsx src/migrate.ts",

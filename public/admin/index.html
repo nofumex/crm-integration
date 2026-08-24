@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>amoCRM Messenger Bridge — Admin</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a2332;
+      --surface2: #243044;
+      --border: #2d3a4f;
+      --text: #e7ecf3;
+      --muted: #8b9cb3;
+      --accent: #4f8cff;
+      --accent-hover: #6ba0ff;
+      --success: #3dd68c;
+      --warning: #f5a623;
+      --danger: #ff6b6b;
+      --radius: 10px;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); min-height: 100vh; }
+    .wrap { max-width: 960px; margin: 0 auto; padding: 24px 16px 64px; }
+    h1 { font-size: 1.5rem; font-weight: 600; margin: 0 0 4px; }
+    .subtitle { color: var(--muted); font-size: 0.9rem; margin-bottom: 24px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; }
+    .card h2 { font-size: 1rem; margin: 0 0 16px; font-weight: 600; }
+    .banner { padding: 12px 16px; border-radius: var(--radius); margin-bottom: 16px; font-size: 0.9rem; }
+    .banner.warn { background: rgba(245,166,35,.12); border: 1px solid rgba(245,166,35,.35); color: #ffd68a; }
+    .banner.info { background: rgba(79,140,255,.1); border: 1px solid rgba(79,140,255,.3); color: #a8c7ff; }
+    .banner.ok { background: rgba(61,214,140,.1); border: 1px solid rgba(61,214,140,.3); color: #8ef0bc; }
+    label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 6px; }
+    input { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 0.95rem; margin-bottom: 12px; }
+    input:focus { outline: 2px solid var(--accent); border-color: transparent; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 600px) { .row { grid-template-columns: 1fr; } }
+    button, .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 16px; border-radius: 8px; border: none; font-size: 0.9rem; font-weight: 500; cursor: pointer; transition: background .15s; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+    .btn-secondary:hover { background: var(--border); }
+    .btn-danger { background: rgba(255,107,107,.15); color: var(--danger); border: 1px solid rgba(255,107,107,.35); }
+    .btn-danger:hover { background: rgba(255,107,107,.25); }
+    .btn-sm { padding: 6px 12px; font-size: 0.82rem; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .status { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+    .status-connected { background: rgba(61,214,140,.15); color: var(--success); }
+    .status-disconnected { background: rgba(139,156,179,.15); color: var(--muted); }
+    .status-connecting { background: rgba(79,140,255,.15); color: var(--accent); }
+    .status-reconnect_required { background: rgba(245,166,35,.15); color: var(--warning); }
+    .status-error, .status-disabled { background: rgba(255,107,107,.15); color: var(--danger); }
+    .status-awaiting_code, .status-awaiting_password { background: rgba(79,140,255,.2); color: #9ec5ff; }
+    .account { border-top: 1px solid var(--border); padding-top: 16px; margin-top: 16px; }
+    .account:first-child { border-top: none; padding-top: 0; margin-top: 0; }
+    .account-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+    .account-title { font-weight: 600; font-size: 1rem; }
+    .account-meta { color: var(--muted); font-size: 0.85rem; margin-top: 4px; }
+    .mono { font-family: ui-monospace, "Cascadia Code", monospace; font-size: 0.82rem; word-break: break-all; }
+    .hidden { display: none !important; }
+    .wizard-steps { display: flex; gap: 8px; margin-bottom: 20px; }
+    .step-dot { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.8rem; font-weight: 600; background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
+    .step-dot.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .step-dot.done { background: rgba(61,214,140,.2); color: var(--success); border-color: rgba(61,214,140,.4); }
+    .error-msg { color: var(--danger); font-size: 0.85rem; margin-top: 8px; }
+    #login-screen { max-width: 400px; margin: 80px auto; }
+    .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px; }
+    .empty { color: var(--muted); text-align: center; padding: 32px 16px; }
+  </style>
+</head>
+<body>
+  <div id="login-screen" class="wrap">
+    <div class="card">
+      <h1>Вход в Admin</h1>
+      <p class="subtitle">Введите ADMIN_API_TOKEN из .env</p>
+      <label for="token-input">API Token</label>
+      <input id="token-input" type="password" autocomplete="off" placeholder="Bearer token">
+      <button class="btn btn-primary" id="login-btn" style="width:100%">Войти</button>
+      <p class="error-msg hidden" id="login-error"></p>
+    </div>
+  </div>
+
+  <div id="app" class="wrap hidden">
+    <div class="toolbar">
+      <div>
+        <h1>Telegram аккаунты</h1>
+        <p class="subtitle">amoCRM Messenger Bridge</p>
+      </div>
+      <button class="btn btn-secondary btn-sm" id="logout-btn">Выйти</button>
+    </div>
+
+    <div id="bootstrap-banner"></div>
+
+    <div class="card">
+      <div class="toolbar" style="margin-bottom:0">
+        <h2 style="margin:0">Аккаунты</h2>
+        <button class="btn btn-primary btn-sm" id="connect-btn">+ Подключить Telegram</button>
+      </div>
+      <div id="accounts-list"><div class="empty">Загрузка…</div></div>
+    </div>
+
+    <div id="wizard" class="card hidden">
+      <h2 id="wizard-title">Подключение Telegram</h2>
+      <div class="wizard-steps">
+        <div class="step-dot active" data-step="1">1</div>
+        <div class="step-dot" data-step="2">2</div>
+        <div class="step-dot" data-step="3">3</div>
+      </div>
+
+      <div id="step-phone">
+        <div class="row">
+          <div>
+            <label>Номер телефона</label>
+            <input id="w-phone" placeholder="+79001234567">
+          </div>
+          <div>
+            <label>Отображаемое имя (необязательно)</label>
+            <input id="w-display" placeholder="Sales Telegram">
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label>Telegram api_id</label>
+            <input id="w-api-id" type="number" placeholder="12345678">
+          </div>
+          <div>
+            <label>Telegram api_hash</label>
+            <input id="w-api-hash" placeholder="abcdef...">
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label>amoCRM Account ID</label>
+            <input id="w-amo-id" placeholder="12345678">
+          </div>
+          <div>
+            <label>Source external_id</label>
+            <input id="w-source" placeholder="telegram-main" maxlength="36">
+          </div>
+        </div>
+        <p class="account-meta">api_id и api_hash хранятся зашифрованно в PostgreSQL (SecretStore), не в .env.</p>
+        <div class="actions">
+          <button class="btn btn-primary" id="w-start">Отправить код</button>
+          <button class="btn btn-secondary" id="w-cancel">Отмена</button>
+        </div>
+      </div>
+
+      <div id="step-code" class="hidden">
+        <label>Код из Telegram</label>
+        <input id="w-code" placeholder="12345" autocomplete="one-time-code">
+        <div class="actions">
+          <button class="btn btn-primary" id="w-submit-code">Подтвердить</button>
+          <button class="btn btn-secondary" id="w-back-phone">Назад</button>
+        </div>
+      </div>
+
+      <div id="step-password" class="hidden">
+        <label>Пароль 2FA</label>
+        <input id="w-password" type="password" placeholder="Cloud password">
+        <div class="actions">
+          <button class="btn btn-primary" id="w-submit-password">Подтвердить</button>
+        </div>
+      </div>
+
+      <div id="step-done" class="hidden">
+        <div class="banner ok">Telegram аккаунт успешно подключён. Сервис автоматически установит MTProto-сессию.</div>
+        <div class="actions">
+          <button class="btn btn-primary" id="w-connect-amocrm">Подключить amoCRM Chats</button>
+          <button class="btn btn-secondary" id="w-done">Готово</button>
+        </div>
+      </div>
+
+      <p class="error-msg hidden" id="wizard-error"></p>
+    </div>
+  </div>
+
+  <script>
+    const TOKEN_KEY = "bridge_admin_token";
+    let token = sessionStorage.getItem(TOKEN_KEY) || "";
+    let bootstrap = null;
+    let accounts = [];
+    let wizard = { step: 1, accountId: null };
+
+    const $ = (id) => document.getElementById(id);
+    const show = (el, v) => el.classList.toggle("hidden", !v);
+
+    function authHeaders() {
+      return { Authorization: "Bearer " + token, "Content-Type": "application/json" };
+    }
+
+    async function api(path, opts = {}) {
+      const res = await fetch(path, { ...opts, headers: { ...authHeaders(), ...(opts.headers || {}) } });
+      const text = await res.text();
+      let body;
+      try { body = text ? JSON.parse(text) : null; } catch { body = { error: text }; }
+      if (!res.ok) throw new Error(body?.error || res.statusText || "Request failed");
+      return body;
+    }
+
+    function effectiveStatus(acc) {
+      if (acc.onboardingStatus === "awaiting_code") return "awaiting_code";
+      if (acc.onboardingStatus === "awaiting_password") return "awaiting_password";
+      return acc.state;
+    }
+
+    function statusLabel(s) {
+      const map = {
+        connected: "Connected",
+        disconnected: "Disconnected",
+        connecting: "Connecting",
+        reconnect_required: "Reconnect required",
+        error: "Error",
+        disabled: "Disabled",
+        awaiting_code: "Awaiting code",
+        awaiting_password: "Awaiting 2FA",
+      };
+      return map[s] || s;
+    }
+
+    function renderBootstrap() {
+      const el = $("bootstrap-banner");
+      if (!bootstrap) { el.innerHTML = ""; return; }
+      let html = "";
+      if (!bootstrap.chatsChannelConfigured) {
+        html += `<div class="banner warn">amoCRM Chats channel не настроен. Укажите AMOCRM_CHATS_CHANNEL_ID и AMOCRM_CHATS_CHANNEL_SECRET в .env и перезапустите сервис. Webhook пока вернёт 503.</div>`;
+      }
+      if (bootstrap.webhookUrlTemplate) {
+        html += `<div class="banner info">Webhook URL для amoCRM: <span class="mono">${bootstrap.webhookUrlTemplate}</span><br><small>После подключения аккаунта к amoCRM подставьте scope_id вместо {scope_id}.</small></div>`;
+      }
+      el.innerHTML = html;
+    }
+
+    function renderAccounts() {
+      const el = $("accounts-list");
+      if (!accounts.length) {
+        el.innerHTML = `<div class="empty">Нет подключённых аккаунтов. Нажмите «Подключить Telegram».</div>`;
+        return;
+      }
+      el.innerHTML = accounts.map(acc => {
+        const st = effectiveStatus(acc);
+        const webhook = acc.amoScopeId && bootstrap?.webhookUrlTemplate
+          ? bootstrap.webhookUrlTemplate.replace("{scope_id}", acc.amoScopeId)
+          : null;
+        return `
+          <div class="account" data-id="${acc.id}">
+            <div class="account-head">
+              <div>
+                <div class="account-title">${esc(acc.displayName || acc.phone)}</div>
+                <div class="account-meta">${esc(acc.phone)} · ${esc(acc.sourceExternalId)}</div>
+              </div>
+              <span class="status status-${st}">${statusLabel(st)}</span>
+            </div>
+            ${acc.lastError ? `<div class="error-msg">${esc(acc.lastError)}</div>` : ""}
+            ${webhook ? `<div class="account-meta" style="margin-top:8px">Webhook: <span class="mono">${esc(webhook)}</span></div>` : ""}
+            <div class="actions">
+              ${!acc.amoScopeId ? `<button class="btn btn-secondary btn-sm" data-action="amocrm-connect">Подключить amoCRM</button>` : ""}
+              ${acc.amoScopeId && bootstrap?.chatsChannelConfigured ? `<button class="btn btn-secondary btn-sm" data-action="amocrm-source">Создать source</button>` : ""}
+              <button class="btn btn-secondary btn-sm" data-action="reconnect">Reconnect</button>
+              <button class="btn btn-danger btn-sm" data-action="disconnect">Disconnect</button>
+            </div>
+          </div>`;
+      }).join("");
+
+      el.querySelectorAll("[data-action]").forEach(btn => {
+        btn.addEventListener("click", () => handleAction(btn.closest(".account").dataset.id, btn.dataset.action));
+      });
+    }
+
+    function esc(s) {
+      return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+    }
+
+    async function refresh() {
+      try {
+        bootstrap = await api("/admin/bootstrap");
+        accounts = await api("/admin/accounts");
+        renderBootstrap();
+        renderAccounts();
+        resumeWizardIfNeeded();
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function resumeWizardIfNeeded() {
+      const pending = accounts.find(a => a.onboardingStatus);
+      if (pending && !wizard.accountId) {
+        wizard.accountId = pending.id;
+        if (pending.onboardingStatus === "awaiting_password") setWizardStep(3);
+        else setWizardStep(2);
+        show($("wizard"), true);
+      }
+    }
+
+    async function handleAction(accountId, action) {
+      try {
+        if (action === "disconnect") {
+          await api(`/admin/accounts/${accountId}/disconnect`, { method: "POST" });
+        } else if (action === "reconnect") {
+          await api(`/admin/accounts/${accountId}/reconnect`, { method: "POST" });
+        } else if (action === "amocrm-connect") {
+          const r = await api(`/admin/accounts/${accountId}/amocrm/connect`, { method: "POST", body: "{}" });
+          alert(`amoCRM подключён. scope_id: ${r.scopeId}`);
+        } else if (action === "amocrm-source") {
+          await api(`/admin/accounts/${accountId}/amocrm/source`, { method: "POST", body: "{}" });
+          alert("Source создан (или уже существовал).");
+        }
+        await refresh();
+      } catch (e) {
+        alert(e.message);
+      }
+    }
+
+    function setWizardStep(n) {
+      wizard.step = n;
+      document.querySelectorAll(".step-dot").forEach(d => {
+        const s = Number(d.dataset.step);
+        d.classList.toggle("active", s === n);
+        d.classList.toggle("done", s < n);
+      });
+      show($("step-phone"), n === 1);
+      show($("step-code"), n === 2);
+      show($("step-password"), n === 3);
+      show($("step-done"), n === 4);
+      show($("wizard-error"), false);
+    }
+
+    function openWizard() {
+      wizard = { step: 1, accountId: null };
+      $("w-phone").value = "";
+      $("w-display").value = "";
+      $("w-api-id").value = "";
+      $("w-api-hash").value = "";
+      $("w-amo-id").value = bootstrap?.amoAccountIdDefault || "";
+      $("w-source").value = bootstrap?.sourceExternalIdDefault || "";
+      $("w-code").value = "";
+      $("w-password").value = "";
+      setWizardStep(1);
+      show($("wizard"), true);
+    }
+
+    function closeWizard() {
+      show($("wizard"), false);
+      wizard = { step: 1, accountId: null };
+    }
+
+    async function startOnboarding() {
+      const body = {
+        phone: $("w-phone").value.trim(),
+        apiId: Number($("w-api-id").value),
+        apiHash: $("w-api-hash").value.trim(),
+        displayName: $("w-display").value.trim() || undefined,
+        amoAccountId: $("w-amo-id").value.trim(),
+        sourceExternalId: $("w-source").value.trim(),
+      };
+      const r = await api("/admin/telegram/onboarding", { method: "POST", body: JSON.stringify(body) });
+      wizard.accountId = r.accountId;
+      setWizardStep(2);
+      await refresh();
+    }
+
+    async function submitCode() {
+      const r = await api(`/admin/telegram/onboarding/${wizard.accountId}/code`, {
+        method: "POST",
+        body: JSON.stringify({ code: $("w-code").value.trim() }),
+      });
+      if (r.status === "awaiting_password") setWizardStep(3);
+      else { setWizardStep(4); await refresh(); }
+    }
+
+    async function submitPassword() {
+      await api(`/admin/telegram/onboarding/${wizard.accountId}/password`, {
+        method: "POST",
+        body: JSON.stringify({ password: $("w-password").value }),
+      });
+      setWizardStep(4);
+      await refresh();
+    }
+
+    async function connectAmocrmFromWizard() {
+      if (!wizard.accountId) return;
+      try {
+        const r = await api(`/admin/accounts/${wizard.accountId}/amocrm/connect`, { method: "POST", body: "{}" });
+        alert(`amoCRM подключён. scope_id: ${r.scopeId}\n\nWebhook: ${bootstrap?.webhookUrlTemplate?.replace("{scope_id}", r.scopeId) || r.scopeId}`);
+        await refresh();
+      } catch (e) {
+        alert(e.message);
+      }
+    }
+
+    function showApp(loggedIn) {
+      show($("login-screen"), !loggedIn);
+      show($("app"), loggedIn);
+    }
+
+    async function login() {
+      token = $("token-input").value.trim();
+      try {
+        await api("/admin/bootstrap");
+        sessionStorage.setItem(TOKEN_KEY, token);
+        showApp(true);
+        await refresh();
+        setInterval(refresh, 5000);
+      } catch (e) {
+        $("login-error").textContent = "Неверный токен или ошибка сервера";
+        show($("login-error"), true);
+      }
+    }
+
+    $("login-btn").addEventListener("click", login);
+    $("token-input").addEventListener("keydown", e => { if (e.key === "Enter") login(); });
+    $("logout-btn").addEventListener("click", () => { sessionStorage.removeItem(TOKEN_KEY); token = ""; location.reload(); });
+    $("connect-btn").addEventListener("click", openWizard);
+    $("w-cancel").addEventListener("click", closeWizard);
+    $("w-done").addEventListener("click", closeWizard);
+    $("w-start").addEventListener("click", () => withWizardError(startOnboarding));
+    $("w-submit-code").addEventListener("click", () => withWizardError(submitCode));
+    $("w-submit-password").addEventListener("click", () => withWizardError(submitPassword));
+    $("w-connect-amocrm").addEventListener("click", connectAmocrmFromWizard);
+    $("w-back-phone").addEventListener("click", () => setWizardStep(1));
+
+    async function withWizardError(fn) {
+      show($("wizard-error"), false);
+      try { await fn(); }
+      catch (e) {
+        $("wizard-error").textContent = e.message;
+        show($("wizard-error"), true);
+      }
+    }
+
+    if (token) {
+      showApp(true);
+      refresh().then(() => setInterval(refresh, 5000));
+    }
+  </script>
+</body>
+</html>

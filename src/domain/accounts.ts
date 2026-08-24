@@ -23,6 +23,7 @@ export interface AccountRepository {
   findByScopeAndSource(scopeId:string,sourceExternalId:string):Promise<MessengerAccount|undefined>;
   findBySource(amoAccountId: string, sourceExternalId: string): Promise<MessengerAccount | undefined>;
   listEnabled(): Promise<MessengerAccount[]>;
+  listAll(): Promise<MessengerAccount[]>;
   upsert(account: MessengerAccount): Promise<void>;
   setScope(id: string, scopeId: string): Promise<void>;
   setState(id: string, state: AccountState, error?: string): Promise<void>;

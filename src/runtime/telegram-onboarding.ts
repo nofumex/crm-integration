@@ -20,6 +20,7 @@ export class TelegramOnboardingService {
  }
  async submitCode(accountId:string,code:string):Promise<{status:"awaiting_password"|"completed"}>{const p=this.required(accountId);if(!p.code)throw new Error("Code is not requested");p.code.resolve(code);const result=await Promise.race([p.completion.then(()=>"completed" as const),waitUntil(()=>Boolean(p.password),10_000).then(()=>"awaiting_password" as const)]);return{status:result};}
  async submitPassword(accountId:string,password:string):Promise<{status:"completed"}>{const p=this.required(accountId);if(!p.password)throw new Error("2FA password is not requested");p.password.resolve(password);await p.completion;return{status:"completed"};}
+ getStatus(accountId:string):null|"awaiting_code"|"awaiting_password"{const p=this.pending.get(accountId);if(!p)return null;return p.password?"awaiting_password":"awaiting_code";}
  private required(id:string){const p=this.pending.get(id);if(!p)throw new Error("No active onboarding for account");return p;}
 }
 function deferred<T>():Deferred<T>{let resolve!:(v:T)=>void,reject!:(e:unknown)=>void;const promise=new Promise<T>((res,rej)=>{resolve=res;reject=rej;});return{promise,resolve,reject};}
