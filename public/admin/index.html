@@ -148,9 +148,11 @@
 
       <div id="step-code" class="hidden">
         <label>Код из Telegram</label>
+        <div id="w-code-delivery" class="hint"></div>
         <input id="w-code" placeholder="12345" autocomplete="one-time-code">
         <div class="actions">
           <button class="btn btn-primary" id="w-submit-code">Подтвердить</button>
+          <button class="btn btn-secondary hidden" id="w-resend-code">Отправить код повторно</button>
           <button class="btn btn-secondary" id="w-back-phone">Назад</button>
         </div>
       </div>
@@ -252,6 +254,7 @@
               <span class="status status-${st}">${statusLabel(st)}</span>
             </div>
             ${acc.lastError ? `<div class="error-msg">${esc(acc.lastError)}</div>` : ""}
+            ${acc.onboardingStatus === "awaiting_code" && acc.codeDelivery ? `<div class="account-meta">Код: ${esc(deliveryLabel(acc.codeDelivery))}${acc.codeDelivery.nextMethod ? `; затем: ${esc(deliveryLabel({method:acc.codeDelivery.nextMethod}))}` : ""}</div>` : ""}
             ${webhook ? `<div class="account-meta" style="margin-top:8px">Webhook: <span class="mono">${esc(webhook)}</span></div>` : ""}
             <div class="actions">
               ${!acc.amoScopeId ? `<button class="btn btn-secondary btn-sm" data-action="amocrm-connect">Подключить amoCRM</button>` : ""}
@@ -328,6 +331,16 @@
       show($("step-password"), n === 3);
       show($("step-done"), n === 4);
       show($("wizard-error"), false);
+      if (n === 2) renderCodeDelivery(accounts.find(a => a.id === wizard.accountId)?.codeDelivery);
+    }
+
+    function deliveryLabel(delivery) {
+      return ({ app: "в Telegram на другом устройстве", sms: "SMS", email: "email", other: "другой способ Telegram" })[delivery?.method] || "способ неизвестен";
+    }
+
+    function renderCodeDelivery(delivery) {
+      $("w-code-delivery").textContent = delivery ? `Telegram отправил код: ${deliveryLabel(delivery)}${delivery.nextMethod ? `. Следующий способ: ${deliveryLabel({method: delivery.nextMethod})}.` : ""}` : "";
+      show($("w-resend-code"), Boolean(delivery?.canResend));
     }
 
     function openWizard(account) {
@@ -361,8 +374,8 @@
       };
       const r = await api("/admin/telegram/onboarding", { method: "POST", body: JSON.stringify(body) });
       wizard.accountId = r.accountId;
-      setWizardStep(2);
       await refresh();
+      setWizardStep(2);
     }
 
     async function submitCode() {
@@ -372,6 +385,13 @@
       });
       if (r.status === "awaiting_password") setWizardStep(3);
       else { setWizardStep(4); await refresh(); }
+    }
+
+    async function resendCode() {
+      const delivery = await api(`/admin/telegram/onboarding/${wizard.accountId}/resend`, { method: "POST" });
+      const account = accounts.find(a => a.id === wizard.accountId);
+      if (account) account.codeDelivery = delivery;
+      renderCodeDelivery(delivery);
     }
 
     async function submitPassword() {
@@ -421,6 +441,7 @@
     $("w-done").addEventListener("click", closeWizard);
     $("w-start").addEventListener("click", () => withWizardError(startOnboarding));
     $("w-submit-code").addEventListener("click", () => withWizardError(submitCode));
+    $("w-resend-code").addEventListener("click", () => withWizardError(resendCode));
     $("w-submit-password").addEventListener("click", () => withWizardError(submitPassword));
     $("w-connect-amocrm").addEventListener("click", connectAmocrmFromWizard);
     $("w-back-phone").addEventListener("click", () => setWizardStep(1));

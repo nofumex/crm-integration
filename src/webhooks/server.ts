@@ -58,7 +58,7 @@ export function buildWebhookServer(o: Options): FastifyInstance {
   app.addContentTypeParser("application/json", { parseAs: "buffer" }, (req, body, done) => {
     try {
       req.rawBody = body.toString("utf8");
-      done(null, JSON.parse(req.rawBody));
+      done(null, req.rawBody.trim() ? JSON.parse(req.rawBody) : {});
     } catch (e) {
       done(e as Error, undefined);
     }
@@ -146,6 +146,9 @@ export function buildWebhookServer(o: Options): FastifyInstance {
     );
     app.post("/admin/telegram/onboarding/:accountId/password", { preHandler: admin(o.adminToken) }, async (req) =>
       o.onboarding!.submitPassword(String((req.params as any).accountId), String((req.body as any).password)),
+    );
+    app.post("/admin/telegram/onboarding/:accountId/resend", { preHandler: admin(o.adminToken) }, async (req) =>
+      o.onboarding!.resendCode(String((req.params as any).accountId)),
     );
   }
 

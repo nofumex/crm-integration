@@ -1,6 +1,7 @@
 import type { AccountRepository, MessengerAccount } from "../domain/accounts.js";
 import type { ReconnectSupervisor } from "./adapter-runtime.js";
 import type { TelegramOnboardingService } from "./telegram-onboarding.js";
+import type { TelegramCodeDelivery } from "../adapters/telegram-adapter.js";
 
 export interface AdminAccountView {
   id: string;
@@ -13,6 +14,7 @@ export interface AdminAccountView {
   state: string;
   lastError?: string;
   onboardingStatus: null | "awaiting_code" | "awaiting_password";
+  codeDelivery?: TelegramCodeDelivery;
 }
 
 export class AccountAdminService {
@@ -24,7 +26,7 @@ export class AccountAdminService {
 
   async list(): Promise<AdminAccountView[]> {
     const rows = await this.accounts.listAll();
-    return rows.map((a) => toView(a, this.onboarding?.getStatus(a.id) ?? null));
+    return rows.map((a) => toView(a, this.onboarding?.getStatus(a.id) ?? null, this.onboarding?.getDelivery(a.id)));
   }
 
   async disconnect(accountId: string): Promise<{ ok: true }> {
@@ -39,7 +41,7 @@ export class AccountAdminService {
   }
 }
 
-function toView(account: MessengerAccount, onboardingStatus: AdminAccountView["onboardingStatus"]): AdminAccountView {
+function toView(account: MessengerAccount, onboardingStatus: AdminAccountView["onboardingStatus"], codeDelivery?: TelegramCodeDelivery): AdminAccountView {
   return {
     id: account.id,
     messenger: account.messenger,
@@ -51,5 +53,6 @@ function toView(account: MessengerAccount, onboardingStatus: AdminAccountView["o
     state: account.state,
     lastError: account.lastError,
     onboardingStatus,
+    ...(codeDelivery ? { codeDelivery } : {}),
   };
 }

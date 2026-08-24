@@ -1,4 +1,4 @@
-import { TelegramClient } from "teleproto";
+import { Api, TelegramClient } from "teleproto";
 import { NewMessage } from "teleproto/events/index.js";
 import { StringSession } from "teleproto/sessions/index.js";
 import { readFile } from "node:fs/promises";
@@ -25,6 +25,7 @@ export interface TelegramAuthorizationPrompts {
   password: () => Promise<string>;
   onError?: (error: Error) => void;
 }
+export interface TelegramCodeDelivery { method:"app"|"sms"|"email"|"other";nextMethod?:"app"|"sms"|"email"|"other";canResend:boolean; }
 
 /** MTProto user-account adapter using GramJS; one instance represents one Telegram account/session. */
 export class TelegramAdapter implements MessengerAdapter {
@@ -34,6 +35,7 @@ export class TelegramAdapter implements MessengerAdapter {
   private inbound?: InboundHandler;
   private status?: StatusHandler;
   private handlerInstalled = false;
+  private authorization?:{phone:string;phoneCodeHash:string;delivery:TelegramCodeDelivery};
 
   constructor(private readonly options: TelegramOptions) {
     this.accountId=options.accountId;
@@ -51,6 +53,12 @@ export class TelegramAdapter implements MessengerAdapter {
     this.installHandler();
     return String(this.client.session.save());
   }
+
+  async beginAuthorization(phone:string):Promise<TelegramCodeDelivery>{await withTimeout(this.client.connect(),this.timeout());const sent:any=await withTimeout((this.client as any).invoke(new Api.auth.SendCode({phoneNumber:phone,apiId:this.options.apiId,apiHash:this.options.apiHash,settings:new Api.CodeSettings({})})),this.timeout());if(!sent?.phoneCodeHash)throw new Error("Telegram did not return an authorization code");const delivery=codeDelivery(sent);this.authorization={phone,phoneCodeHash:String(sent.phoneCodeHash),delivery};return delivery;}
+  async submitAuthorizationCode(code:string):Promise<"completed"|"awaiting_password">{const auth=this.requiredAuthorization();try{await withTimeout((this.client as any).invoke(new Api.auth.SignIn({phoneNumber:auth.phone,phoneCodeHash:auth.phoneCodeHash,phoneCode:code})),this.timeout());this.installHandler();return"completed";}catch(error){if((error as any)?.errorMessage==="SESSION_PASSWORD_NEEDED")return"awaiting_password";throw error;}}
+  async submitAuthorizationPassword(password:string):Promise<void>{this.requiredAuthorization();await withTimeout((this.client as any).signInWithPassword({apiId:this.options.apiId,apiHash:this.options.apiHash},{password:async()=>password,onError:()=>true}),this.timeout());this.installHandler();}
+  async resendAuthorizationCode():Promise<TelegramCodeDelivery>{const auth=this.requiredAuthorization();if(!auth.delivery.canResend)throw new Error("Telegram does not offer another code delivery method");const sent:any=await withTimeout((this.client as any).invoke(new Api.auth.ResendCode({phoneNumber:auth.phone,phoneCodeHash:auth.phoneCodeHash})),this.timeout());if(!sent?.phoneCodeHash)throw new Error("Telegram did not return a resent authorization code");const delivery=codeDelivery(sent);this.authorization={phone:auth.phone,phoneCodeHash:String(sent.phoneCodeHash),delivery};return delivery;}
+  authorizationSession():string{this.requiredAuthorization();return String(this.client.session.save());}
 
   async connect(accountId: string): Promise<void> {
     if (accountId !== this.options.accountId) throw new Error("Telegram adapter/account mismatch");
@@ -106,7 +114,11 @@ export class TelegramAdapter implements MessengerAdapter {
     this.handlerInstalled = true;
   }
   private timeout(){return this.options.timeoutMs??15_000;}
+  private requiredAuthorization(){if(!this.authorization)throw new Error("Telegram authorization has not started");return this.authorization;}
 }
+
+function codeDelivery(sent:any):TelegramCodeDelivery{return{method:deliveryMethod(sent?.type?.className),...(sent?.nextType?{nextMethod:deliveryMethod(sent.nextType.className)}:{}),canResend:Boolean(sent?.nextType)};}
+function deliveryMethod(className:unknown):TelegramCodeDelivery["method"]{const value=String(className??"");if(/App$/.test(value))return"app";if(/Sms$|SmsWord$|SmsPhrase$|FirebaseSms$|FragmentSms$/.test(value))return"sms";if(/Email/.test(value))return"email";return"other";}
 
 function inferTelegramMediaKind(media: any): NormalizedAttachment["kind"] {
   const name = media?.className ?? media?.constructor?.name ?? "";
