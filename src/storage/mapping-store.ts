@@ -23,6 +23,7 @@ export interface MessageMapping {
 export interface MappingStore {
   getConversation(messenger:MessengerKind,accountId:string,providerConversationId:string):Promise<ConversationMapping|undefined>;
   findConversationByRecipient(messenger:MessengerKind,accountId:string,providerRecipientId:string):Promise<ConversationMapping|undefined>;
+  findConversationByPhone(messenger:MessengerKind,accountId:string,phone:string):Promise<ConversationMapping|undefined>;
   findConversationByAmoId(amoConversationId:string):Promise<ConversationMapping|undefined>;
   upsertConversation(mapping:ConversationMapping):Promise<void>;
   saveMessage(mapping:MessageMapping):Promise<void>;
@@ -38,6 +39,7 @@ export class InMemoryMappingStore implements MappingStore {
   private conversations:ConversationMapping[]=[];private messages:MessageMapping[]=[];
   async getConversation(m:MessengerKind,a:string,c:string){return this.conversations.find(x=>x.messenger===m&&x.messengerAccountId===a&&x.providerConversationId===c);}
   async findConversationByRecipient(m:MessengerKind,a:string,r:string){return this.conversations.find(x=>x.messenger===m&&x.messengerAccountId===a&&x.providerRecipientId===r);}
+  async findConversationByPhone(m:MessengerKind,a:string,p:string){const phone=digits(p);return this.conversations.find(x=>x.messenger===m&&x.messengerAccountId===a&&digits(x.providerProfile?.phone)===phone);}
   async findConversationByAmoId(id:string){return this.conversations.find(x=>x.amoConversationId===id);}
   async upsertConversation(x:ConversationMapping){const old=await this.findConversationByRecipient(x.messenger,x.messengerAccountId,x.providerRecipientId);if(old)Object.assign(old,x);else this.conversations.push({...x});}
   async saveMessage(x:MessageMapping){const old=await this.findMessageByMessengerId(x.messenger,x.messengerAccountId,x.messengerMessageId);if(old)Object.assign(old,x);else this.messages.push({...x,statusAt:x.statusAt??x.occurredAt});}
@@ -49,3 +51,4 @@ export class InMemoryMappingStore implements MappingStore {
   async clearDeliveryUnknown(amoId:string){const i=this.messages.findIndex(v=>v.amoMessageId===amoId&&v.status==="delivery_unknown");if(i<0)return false;this.messages.splice(i,1);return true;}
 }
 function statusRank(s:MessageStatus){return({delivery_unknown:-2,queued:0,sent:1,delivered:2,read:3,failed:-1})[s];}
+function digits(value:unknown){return typeof value==="string"?value.replace(/\D/g,""):"";}
