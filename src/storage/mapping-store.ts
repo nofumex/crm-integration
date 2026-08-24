@@ -24,6 +24,7 @@ export interface MappingStore {
   getConversation(messenger:MessengerKind,accountId:string,providerConversationId:string):Promise<ConversationMapping|undefined>;
   findConversationByRecipient(messenger:MessengerKind,accountId:string,providerRecipientId:string):Promise<ConversationMapping|undefined>;
   findConversationByPhone(messenger:MessengerKind,accountId:string,phone:string):Promise<ConversationMapping|undefined>;
+  findConversationByAmoContactId(messenger:MessengerKind,accountId:string,amoContactId:number):Promise<ConversationMapping|undefined>;
   findConversationByAmoId(amoConversationId:string):Promise<ConversationMapping|undefined>;
   upsertConversation(mapping:ConversationMapping):Promise<void>;
   saveMessage(mapping:MessageMapping):Promise<void>;
@@ -40,6 +41,7 @@ export class InMemoryMappingStore implements MappingStore {
   async getConversation(m:MessengerKind,a:string,c:string){return this.conversations.find(x=>x.messenger===m&&x.messengerAccountId===a&&x.providerConversationId===c);}
   async findConversationByRecipient(m:MessengerKind,a:string,r:string){return this.conversations.find(x=>x.messenger===m&&x.messengerAccountId===a&&x.providerRecipientId===r);}
   async findConversationByPhone(m:MessengerKind,a:string,p:string){const phone=digits(p);return this.conversations.find(x=>x.messenger===m&&x.messengerAccountId===a&&digits(x.providerProfile?.phone)===phone);}
+  async findConversationByAmoContactId(m:MessengerKind,a:string,c:number){return this.conversations.find(x=>x.messenger===m&&x.messengerAccountId===a&&x.amoContactId===c);}
   async findConversationByAmoId(id:string){return this.conversations.find(x=>x.amoConversationId===id);}
   async upsertConversation(x:ConversationMapping){const old=await this.findConversationByRecipient(x.messenger,x.messengerAccountId,x.providerRecipientId);if(old)Object.assign(old,x);else this.conversations.push({...x});}
   async saveMessage(x:MessageMapping){const old=await this.findMessageByMessengerId(x.messenger,x.messengerAccountId,x.messengerMessageId);if(old)Object.assign(old,x);else this.messages.push({...x,statusAt:x.statusAt??x.occurredAt});}
