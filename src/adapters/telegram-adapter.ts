@@ -85,9 +85,9 @@ export class TelegramAdapter implements MessengerAdapter {
     try{resolved=await withTimeout((this.client as any).invoke(new Api.contacts.ResolvePhone({phone})),this.timeout());}
     catch{throw new TelegramRecipientResolutionError();}
     const users=Array.isArray(resolved?.users)?resolved.users:[];
-    const entity=users.length===1?users[0]:users.find((user:any)=>peerUserIds(resolved?.peer).some(id=>String(user?.id)===id));
-    if(!entity)throw new TelegramRecipientResolutionError();
-    let inputPeer:any;try{inputPeer=await withTimeout(this.client.getInputEntity(entity),this.timeout());}catch{if(entity?.id===undefined||entity?.id===null||entity?.accessHash===undefined||entity?.accessHash===null)throw new TelegramRecipientResolutionError();inputPeer=new Api.InputPeerUser({userId:entity.id,accessHash:entity.accessHash});}
+    const entity=peerUserIds(resolved?.peer).map(peerId=>users.find((user:any)=>String(user?.id)===peerId)).find(Boolean)??(users.length===1?users[0]:undefined);
+    if(!entity||entity.id===undefined||entity.id===null||entity.accessHash===undefined||entity.accessHash===null)throw new TelegramRecipientResolutionError();
+    let inputPeer:any;try{inputPeer=await withTimeout(this.client.getInputEntity(entity),this.timeout());}catch{inputPeer=new Api.InputPeerUser({userId:entity.id,accessHash:entity.accessHash});}
     const participant=telegramParticipant(entity,String(entity.id),inputPeer);if(!participant.recipientReference)throw new TelegramRecipientResolutionError();
     return{providerRecipientId:participant.externalId,providerConversationId:participant.externalId,providerRecipientRef:participant.recipientReference,providerProfile:participant.profile};
   }
