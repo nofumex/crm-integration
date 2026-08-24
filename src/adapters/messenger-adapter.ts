@@ -1,4 +1,4 @@
-import type { MessengerKind, NormalizedMessage, SendMessageCommand, SendResult } from "../domain/messages.js";
+import type { MessengerKind, NormalizedMessage, SendMessageCommand, SendResult, TelegramRecipientReference } from "../domain/messages.js";
 
 export type InboundHandler = (message: NormalizedMessage) => Promise<void>;
 export type StatusHandler = (accountId: string, externalMessageId: string, status: SendResult["status"], occurredAt: Date) => Promise<void>;
@@ -12,7 +12,7 @@ export interface MessengerAdapter {
   onInbound(handler: InboundHandler): void;
   onStatus(handler: StatusHandler): void;
   health(accountId: string): Promise<{ connected: boolean; detail?: string }>;
-  resolveRecipient(identifier: { phone?: string; username?: string }): Promise<{ providerRecipientId: string; providerConversationId: string }>;
+  resolveRecipient(identifier: { phone?: string; username?: string }): Promise<{ providerRecipientId: string; providerConversationId: string; providerRecipientRef?: TelegramRecipientReference; providerProfile?: import("../domain/messages.js").TelegramProfile }>;
 }
 
 export interface AdapterRegistry { get(kind:MessengerKind,accountId:string):MessengerAdapter|undefined; all():MessengerAdapter[]; }

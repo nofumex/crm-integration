@@ -1,10 +1,12 @@
-import type { MessageDirection, MessageStatus, MessengerKind } from "../domain/messages.js";
+import type { MessageDirection, MessageStatus, MessengerKind, TelegramProfile, TelegramRecipientReference } from "../domain/messages.js";
 
 export interface ConversationMapping {
   messenger: MessengerKind;
   messengerAccountId: string;
   providerConversationId?: string;
   providerRecipientId: string;
+  providerRecipientRef?: TelegramRecipientReference;
+  providerProfile?: TelegramProfile;
   amoConversationId?: string;
   amoContactId?: number;
   amoLeadId?: number;

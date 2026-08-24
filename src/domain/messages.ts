@@ -19,6 +19,24 @@ export interface NormalizedParticipant {
   phone?: string;
   username?: string;
   avatarUrl?: string;
+  /** Safe Telegram peer data needed to address this user after an adapter restart. */
+  recipientReference?: TelegramRecipientReference;
+  /** Safe, provider-supplied profile fields. This is never an MTProto session. */
+  profile?: TelegramProfile;
+}
+
+export interface TelegramRecipientReference {
+  kind: "telegram_input_peer_user";
+  userId: string;
+  accessHash: string;
+}
+
+export interface TelegramProfile {
+  firstName?: string;
+  lastName?: string;
+  username?: string;
+  phone?: string;
+  isBot?: boolean;
 }
 
 export interface NormalizedMessage {
@@ -42,6 +60,7 @@ export interface SendMessageCommand {
   accountId: string;
   conversationId: string;
   recipientId: string;
+  recipientReference?: TelegramRecipientReference;
   text?: string;
   attachments?: NormalizedAttachment[];
   idempotencyKey: string;
