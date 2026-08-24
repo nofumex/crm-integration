@@ -31,7 +31,7 @@ export class DurableWorker {
     const heartbeat=setInterval(()=>void this.options.queue.heartbeat(job.id,this.workerId).catch(()=>undefined),Math.max(1000,Math.floor(this.leaseMs/3)));
     heartbeat.unref?.();
     try { await handler(job); await this.options.queue.complete(job.id,this.workerId); }
-    catch(error){const decision=retryDecision(error,job.attempts,this.options);const message=safeError(error);if(decision.retry)await this.options.queue.retry(job.id,this.workerId,message,decision.delayMs);else await this.options.queue.deadLetter(job.id,this.workerId,message);this.options.logger?.error({jobId:job.id,kind:job.kind,retry:decision.retry},"job failed");}
+    catch(error){const decision=retryDecision(error,job.attempts,this.options);const message=safeError(error);if(decision.retry)await this.options.queue.retry(job.id,this.workerId,message,decision.delayMs);else await this.options.queue.deadLetter(job.id,this.workerId,message);this.options.logger?.error({jobId:job.id,kind:job.kind,retry:decision.retry,...safeErrorDetails(error)},"job failed");}
     finally{clearInterval(heartbeat);}
     return true;
   }
@@ -54,4 +54,5 @@ export function retryDecision(error:unknown,attempt:number,options:Pick<WorkerOp
 }
 function isTransientDependencyError(error:unknown):boolean{const e=error as any;const code=String(e?.code??"");if(["ECONNRESET","ECONNREFUSED","EHOSTUNREACH","ENETUNREACH","ETIMEDOUT","EAI_AGAIN","UND_ERR_CONNECT_TIMEOUT","UND_ERR_SOCKET"].includes(code))return true;if(e?.name==="TimeoutError"||e?.name==="AbortError"||error instanceof TypeError)return true;if(/^(08|40|53|57P|58)/.test(code)||code==="55P03")return true;const status=Number(e?.$metadata?.httpStatusCode);return status===408||status===429||status>=500;}
 function safeError(error:unknown):string{return error instanceof Error?`${error.name}: ${error.message}`:"Unknown error";}
+function safeErrorDetails(error:unknown){const value=error as {name?:unknown;message?:unknown;stack?:unknown};return{errorName:typeof value?.name==="string"?value.name:"UnknownError",errorMessage:typeof value?.message==="string"?value.message:"Unknown error",errorStack:typeof value?.stack==="string"?value.stack:undefined};}
 function abortableDelay(ms:number,signal:AbortSignal):Promise<void>{return new Promise(resolve=>{if(signal.aborted)return resolve();const timer=setTimeout(done,ms);function done(){clearTimeout(timer);signal.removeEventListener("abort",done);resolve();}signal.addEventListener("abort",done,{once:true});});}
