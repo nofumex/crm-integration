@@ -84,11 +84,11 @@ export class TelegramAdapter implements MessengerAdapter {
     let resolved:any;
     try{resolved=await withTimeout((this.client as any).invoke(new Api.contacts.ResolvePhone({phone})),this.timeout());}
     catch{throw new TelegramRecipientResolutionError();}
-    this.options.logger?.info(resolvePhoneDiagnostics(resolved),"Telegram contacts.resolvePhone result");
-    const peerUserId=resolved?.peer?.userId;const entity=(resolved?.users??[]).find((user:any)=>String(user?.id)===String(peerUserId));
+    const users=Array.isArray(resolved?.users)?resolved.users:[];
+    const entity=users.length===1?users[0]:users.find((user:any)=>peerUserIds(resolved?.peer).some(id=>String(user?.id)===id));
     if(!entity)throw new TelegramRecipientResolutionError();
-    let inputPeer:any;try{inputPeer=await withTimeout(this.client.getInputEntity(entity),this.timeout());}catch{throw new TelegramRecipientResolutionError();}
-    const participant=telegramParticipant(entity,String(peerUserId),inputPeer);if(!participant.recipientReference)throw new TelegramRecipientResolutionError();
+    let inputPeer:any;try{inputPeer=await withTimeout(this.client.getInputEntity(entity),this.timeout());}catch{if(entity?.id===undefined||entity?.id===null||entity?.accessHash===undefined||entity?.accessHash===null)throw new TelegramRecipientResolutionError();inputPeer=new Api.InputPeerUser({userId:entity.id,accessHash:entity.accessHash});}
+    const participant=telegramParticipant(entity,String(entity.id),inputPeer);if(!participant.recipientReference)throw new TelegramRecipientResolutionError();
     return{providerRecipientId:participant.externalId,providerConversationId:participant.externalId,providerRecipientRef:participant.recipientReference,providerProfile:participant.profile};
   }
 
@@ -161,20 +161,7 @@ function telegramParticipant(entity:any,fallbackId:string,inputPeer?:any):Normal
   return {externalId,displayName:name||username||externalId,...(username?{username}:{}),...(phone?{phone}:{}),...(accessHash!==undefined?{recipientReference:{kind:"telegram_input_peer_user",userId,accessHash:String(accessHash)}}:{}),...(Object.keys(profile).length?{profile}:{})};
 }
 function nonEmpty(value:unknown):string|undefined{return typeof value==="string"&&value.trim()?value.trim():undefined;}
-
-function resolvePhoneDiagnostics(resolved: any): Record<string, unknown> {
-  const users = Array.isArray(resolved?.users) ? resolved.users : [];
-  return {
-    hasPeer: Boolean(resolved?.peer),
-    usersCount: users.length,
-    peerUserIdPresent: resolved?.peer?.userId !== undefined && resolved?.peer?.userId !== null,
-    users: users.map((user: any) => ({
-      ...(user?.id !== undefined ? { id: String(user.id) } : {}),
-      hasAccessHash: user?.accessHash !== undefined && user?.accessHash !== null,
-      ...(typeof user?.className === "string" ? { className: user.className } : {}),
-    })),
-  };
-}
+function peerUserIds(peer:any):string[]{return [peer?.userId,peer?.user_id,peer?.id].filter((id):id is string|number|bigint=>id!==undefined&&id!==null).map(String);}
 
 function codeDelivery(sent:any):TelegramCodeDelivery{return{method:deliveryMethod(sent?.type?.className),...(sent?.nextType?{nextMethod:deliveryMethod(sent.nextType.className)}:{}),canResend:Boolean(sent?.nextType)};}
 function deliveryMethod(className:unknown):TelegramCodeDelivery["method"]{const value=String(className??"");if(/App$/.test(value))return"app";if(/Sms$|SmsWord$|SmsPhrase$|FirebaseSms$|FragmentSms$/.test(value))return"sms";if(/Email/.test(value))return"email";return"other";}
