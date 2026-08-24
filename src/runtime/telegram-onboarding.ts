@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AccountRepository } from "../domain/accounts.js";
 import type { SecretStore } from "../security/secret-store.js";
 import { TelegramAdapter, type TelegramCodeDelivery } from "../adapters/telegram-adapter.js";
+import { sourceExternalIdForAccount } from "../amocrm/source-reconciliation.js";
 
 interface StartInput { accountId?:string;phone:string;displayName?:string;amoAccountId:string; }
 interface Pending { adapter:AuthorizingAdapter;credentialRef:string;delivery:TelegramCodeDelivery;awaitingPassword:boolean; }
@@ -9,12 +10,12 @@ type AuthorizingAdapter={beginAuthorization(phone:string):Promise<TelegramCodeDe
 
 export class TelegramOnboardingService {
  private readonly pending=new Map<string,Pending>();
- constructor(private readonly secrets:SecretStore,private readonly accounts:AccountRepository,private readonly settings:{apiId:number;apiHash:string;sourceExternalId:string},private readonly createAdapter:(input:{accountId:string;apiId:number;apiHash:string})=>AuthorizingAdapter=input=>new TelegramAdapter({...input,session:""}),private readonly logger?:{error(data:unknown,message?:string):void}){}
+ constructor(private readonly secrets:SecretStore,private readonly accounts:AccountRepository,private readonly settings:{apiId:number;apiHash:string},private readonly createAdapter:(input:{accountId:string;apiId:number;apiHash:string})=>AuthorizingAdapter=input=>new TelegramAdapter({...input,session:""}),private readonly logger?:{error(data:unknown,message?:string):void}){}
  async start(input:StartInput):Promise<{accountId:string;status:"awaiting_code"}>{
   const accountId=input.accountId??randomUUID();if(this.pending.has(accountId))throw new Error("Onboarding already active");
   const existing=input.accountId?await this.accounts.get(accountId):undefined;if(input.accountId&&!existing)throw new Error("Unknown Telegram account");if(existing&&existing.messenger!=="telegram")throw new Error("Account is not Telegram");
   const credentialRef=existing?.credentialRef??`telegram:${accountId}`;
-  if(existing)await this.accounts.setState(accountId,"connecting");else {await this.secrets.put(credentialRef,{session:"",authorized:false});try{await this.accounts.upsert({id:accountId,messenger:"telegram",providerAccountId:input.phone.replace(/\s/g,""),displayName:input.displayName,credentialRef,amoAccountId:input.amoAccountId,sourceExternalId:this.settings.sourceExternalId,config:{phone:input.phone},state:"connecting"});}catch(error){await this.secrets.delete(credentialRef);throw error;}}
+  if(existing)await this.accounts.setState(accountId,"connecting");else {await this.secrets.put(credentialRef,{session:"",authorized:false});try{await this.accounts.upsert({id:accountId,messenger:"telegram",providerAccountId:input.phone.replace(/\s/g,""),displayName:input.displayName,credentialRef,amoAccountId:input.amoAccountId,sourceExternalId:sourceExternalIdForAccount(accountId),config:{phone:input.phone},state:"connecting"});}catch(error){await this.secrets.delete(credentialRef);throw error;}}
   const adapter=this.createAdapter({accountId,apiId:this.settings.apiId,apiHash:this.settings.apiHash});try{const delivery=await adapter.beginAuthorization(input.phone);this.pending.set(accountId,{adapter,credentialRef,delivery,awaitingPassword:false});return{accountId,status:"awaiting_code"};}catch(error){this.logAuthorizationError(error);await this.fail(accountId);throw new Error("Telegram authorization failed");}
  }
  async submitCode(accountId:string,code:string):Promise<{status:"awaiting_password"|"completed"}>{const p=this.required(accountId);try{const result=await p.adapter.submitAuthorizationCode(code);if(result==="awaiting_password"){p.awaitingPassword=true;return{status:"awaiting_password"};}await this.complete(accountId,p);return{status:"completed"};}catch(error){this.logAuthorizationError(error);await this.fail(accountId);throw new Error("Telegram authorization failed");}}

@@ -13,6 +13,7 @@ import type { AmoChatsLifecycle } from "../amocrm/lifecycle.js";
 import type { MappingStore } from "../storage/mapping-store.js";
 import type { DeliveryReconciliationStore } from "../storage/delivery-reconciliation.js";
 import type { SecretStore } from "../security/secret-store.js";
+import type { AmoSourceReconciliationService } from "../amocrm/source-reconciliation.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -39,6 +40,8 @@ interface Options {
   adminToken?: string;
   mappings?: MappingStore;
   deliveryReconciliation?: DeliveryReconciliationStore;
+  sourceReconciliation?: AmoSourceReconciliationService;
+  sourceWritesEnabled?: boolean;
   bootstrap?: BootstrapInfo;
   logger?: any;
   bodyLimit?: number;
@@ -196,6 +199,14 @@ export function buildWebhookServer(o: Options): FastifyInstance {
     app.post("/admin/accounts/:accountId/amocrm/connect", { preHandler: admin(o.adminToken) }, async (req) =>
       o.lifecycle!.connectAccount(String((req.params as any).accountId), (req.body as any)?.title),
     );
+  }
+
+  if (o.sourceReconciliation) {
+    app.get("/admin/amocrm/sources", { preHandler: admin(o.adminToken) }, async () => o.sourceReconciliation!.verify());
+    app.post("/admin/amocrm/sources/reconcile", { preHandler: admin(o.adminToken) }, async (_req, reply) => {
+      if (!o.sourceWritesEnabled) return reply.code(403).send({ error: "amoCRM source writes are disabled" });
+      return o.sourceReconciliation!.reconcile();
+    });
   }
 
   return app;

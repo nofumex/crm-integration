@@ -50,7 +50,7 @@ export class AmoCrmRestClient {
   createContact(contact:unknown):Promise<any>{return this.request("POST","/api/v4/contacts",[contact]);}
   getContactChats(contactId:number):Promise<any>{return this.request("GET",`/api/v4/contacts/chats?contact_id[]=${contactId}`);}
   findSources(externalId:string):Promise<any>{return this.request("GET",`/api/v4/sources?filter[external_id][]=${encodeURIComponent(externalId)}`);}
-  createSources(sources:Array<{name:string;external_id:string;pipeline_id?:number;default?:boolean;services?:unknown[]}>):Promise<any>{return this.request("POST","/api/v4/sources",sources);}
+  createSources(sources:Array<{name:string;external_id:string;origin_code?:string;pipeline_id?:number;default?:boolean;services?:unknown[]}>):Promise<any>{return this.request("POST","/api/v4/sources",sources);}
 
   async linkChatToContact(contactId: number, chatId: string): Promise<unknown> {
     try{return await this.request("POST", "/api/v4/contacts/chats", [{ contact_id: contactId, chat_id: chatId }]);}
