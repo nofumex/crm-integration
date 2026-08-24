@@ -4,7 +4,7 @@ import { loadConfig } from "../src/config.js";
 const valid = {
   AMOCRM_BASE_URL:"https://example.amocrm.ru", AMOCRM_ACCESS_TOKEN:"token",
   DATABASE_URL:"postgres://db", SECRET_MASTER_KEY:"12345678901234567890123456789012", ADMIN_API_TOKEN:"12345678901234567890123456789012",
-  S3_REGION:"eu-1", S3_BUCKET:"bucket", S3_ACCESS_KEY_ID:"key", S3_SECRET_ACCESS_KEY:"secret", CLAMAV_HOST:"localhost",
+  AMOCRM_DEFAULT_SOURCE_EXTERNAL_ID:"telegram-main", TELEGRAM_API_ID:"12345", TELEGRAM_API_HASH:"telegram-hash", S3_REGION:"eu-1", S3_BUCKET:"bucket", S3_ACCESS_KEY_ID:"key", S3_SECRET_ACCESS_KEY:"secret", CLAMAV_HOST:"localhost",
 };
 describe("startup safety validation",()=>{
   it("defaults amoCRM to production/read-only",()=>{const c=loadConfig(valid as any);expect(c.AMOCRM_READ_ONLY).toBe(true);expect(c.AMOCRM_ENVIRONMENT).toBe("production");});

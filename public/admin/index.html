@@ -121,22 +121,8 @@
         </div>
         <div class="row">
           <div>
-            <label>Telegram api_id</label>
-            <input id="w-api-id" type="number" placeholder="12345678">
-          </div>
-          <div>
-            <label>Telegram api_hash</label>
-            <input id="w-api-hash" placeholder="abcdef...">
-          </div>
-        </div>
-        <div class="row">
-          <div>
             <label>amoCRM Account ID</label>
             <input id="w-amo-id" placeholder="12345678">
-          </div>
-          <div>
-            <label>Source external_id</label>
-            <input id="w-source" placeholder="telegram-main" maxlength="36">
           </div>
         </div>
         <p class="account-meta">api_id и api_hash хранятся зашифрованно в PostgreSQL (SecretStore), не в .env.</p>
@@ -343,10 +329,7 @@
       wizard = { step: 1, accountId: account?.id || null };
       $("w-phone").value = account?.phone || "";
       $("w-display").value = account?.displayName || "";
-      $("w-api-id").value = "";
-      $("w-api-hash").value = "";
       $("w-amo-id").value = account?.amoAccountId || bootstrap?.amoAccountIdDefault || "";
-      $("w-source").value = account?.sourceExternalId || bootstrap?.sourceExternalIdDefault || "";
       $("w-code").value = "";
       $("w-password").value = "";
       setWizardStep(1);
@@ -362,11 +345,8 @@
       const body = {
         accountId: wizard.accountId || undefined,
         phone: $("w-phone").value.trim(),
-        apiId: Number($("w-api-id").value),
-        apiHash: $("w-api-hash").value.trim(),
         displayName: $("w-display").value.trim() || undefined,
         amoAccountId: $("w-amo-id").value.trim(),
-        sourceExternalId: $("w-source").value.trim(),
       };
       const r = await api("/admin/telegram/onboarding", { method: "POST", body: JSON.stringify(body) });
       wizard.accountId = r.accountId;
