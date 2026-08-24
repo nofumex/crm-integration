@@ -46,7 +46,7 @@ export class AmoCrmRestClient {
     return this.request("GET", `/api/v4/sources?limit=${limit}`);
   }
   searchContacts(query:string):Promise<any>{return this.request("GET",`/api/v4/contacts?query=${encodeURIComponent(query)}&with=leads&limit=50`);}
-  findContactsByCustomField(fieldId:number,value:string):Promise<any>{return this.request("GET",`/api/v4/contacts?filter[custom_fields_values][${fieldId}][]=${encodeURIComponent(value)}&with=leads&limit=50`);}
+  async findContactsByCustomField(fieldId:number,value:string):Promise<any>{try{return await this.request("GET",`/api/v4/contacts?filter[custom_fields_values][${fieldId}][]=${encodeURIComponent(value)}&with=leads&limit=50`);}catch(error){if(error instanceof HttpError&&error.status===400)return this.searchContacts(value);throw error;}}
   getContact(contactId:number):Promise<any>{return this.request("GET",`/api/v4/contacts/${contactId}?with=leads`);}
   createContact(contact:unknown):Promise<any>{return this.request("POST","/api/v4/contacts",[contact]);}
   getContactChats(contactId:number):Promise<any>{return this.request("GET",`/api/v4/contacts/chats?contact_id[]=${contactId}`);}
