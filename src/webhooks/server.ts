@@ -12,6 +12,7 @@ import type { AccountAdminService } from "../runtime/account-admin.js";
 import type { AmoChatsLifecycle } from "../amocrm/lifecycle.js";
 import type { MappingStore } from "../storage/mapping-store.js";
 import type { DeliveryReconciliationStore } from "../storage/delivery-reconciliation.js";
+import type { SecretStore } from "../security/secret-store.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -42,6 +43,7 @@ interface Options {
   logger?: any;
   bodyLimit?: number;
   rateLimitMax?: number;
+  oauth?: { redirectUri?: string; secrets?: SecretStore };
 }
 
 const adminHtmlPath = join(dirname(fileURLToPath(import.meta.url)), "../../public/admin/index.html");
@@ -66,6 +68,28 @@ export function buildWebhookServer(o: Options): FastifyInstance {
   app.get("/health/ready", async (_req, reply) => {
     const r = await (o.readiness?.() ?? Promise.resolve({ ready: true }));
     return reply.code(r.ready ? 200 : 503).send(r);
+  });
+
+  app.post("/oauth/secrets", async (req, reply) => {
+    const body = req.body as Record<string, unknown> | undefined;
+    const clientId = textValue(body?.client_id) ?? textValue(body?.client_uuid);
+    const clientSecret = textValue(body?.client_secret);
+    if (!clientId || !clientSecret) return reply.code(400).send({ error: "client_id and client_secret are required" });
+    if (!o.oauth?.secrets) return reply.code(503).send({ error: "OAuth credential storage is unavailable" });
+    await o.oauth.secrets.put("amocrm:external-client", {
+      clientId,
+      clientSecret,
+      ...(textValue(body?.state) ? { state: textValue(body?.state)! } : {}),
+    });
+    return reply.code(204).send();
+  });
+
+  app.get("/oauth/callback", async (req, reply) => {
+    if (!o.oauth?.redirectUri) return reply.code(503).type("text/plain; charset=utf-8").send("OAuth callback is not configured");
+    const configured = new URL(o.oauth.redirectUri);
+    if (configured.pathname !== "/oauth/callback") return reply.code(503).type("text/plain; charset=utf-8").send("OAuth callback URI is misconfigured");
+    if (!textValue((req.query as Record<string, unknown>)?.code)) return reply.code(400).type("text/plain; charset=utf-8").send("Missing OAuth authorization code");
+    return reply.type("text/html; charset=utf-8").send("<!doctype html><title>amoCRM OAuth</title><p>Авторизация amoCRM завершена. Это окно можно закрыть.</p>");
   });
 
   app.post("/webhooks/amocrm/:scopeId", async (req, reply) => {
@@ -191,4 +215,8 @@ function header(req: any, name: string): string | undefined {
 function safeEqual(a?: string, b?: string) {
   if (!a || !b || a.length !== b.length) return false;
   return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
+
+function textValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }

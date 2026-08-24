@@ -11,6 +11,12 @@ These steps must be executed only against a separate amoCRM test account. The cu
 
 ## 2. amoCRM test account
 
+For an amoCRM External Integration, use `https://sinaichannel.ru/oauth/secrets` as
+`secrets_uri` and `https://sinaichannel.ru/oauth/callback` as the Redirect URI.
+The secrets endpoint stores the generated OAuth client credentials encrypted; it never
+returns them or writes them to request logs. Set `PUBLIC_DOMAIN=sinaichannel.ru` and
+`AMOCRM_REDIRECT_URI=https://sinaichannel.ru/oauth/callback` in the deployment `.env`.
+
 1. Register/obtain a custom Chats channel through the official amoCRM process; configure its v2 webhook as `https://bridge.example/webhooks/amocrm/:scope_id` and declare only implemented capabilities.
 2. Put test OAuth token, `channel_id` and `channel_secret` in the test deployment.
 3. Create messenger account records through authenticated onboarding.
