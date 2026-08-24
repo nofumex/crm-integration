@@ -22,6 +22,10 @@ describe("amoCRM read-only safety layer", () => {
     expect(transport).toHaveBeenCalledOnce();
   });
 
+  it("returns undefined for an empty successful HTTP 204 response",async()=>{const transport=vi.fn(async()=>new Response(null,{status:204}));const client=new SafeHttpClient({baseUrl:"https://production.amocrm.ru",transport});await expect(client.request("GET","/api/v4/account")).resolves.toBeUndefined();});
+  it.each([200,202])("returns undefined for an empty successful HTTP %i response",async(status)=>{const transport=vi.fn(async()=>new Response("",{status}));const client=new SafeHttpClient({baseUrl:"https://production.amocrm.ru",transport});await expect(client.request("GET","/api/v4/account")).resolves.toBeUndefined();});
+  it("parses a non-empty successful JSON response",async()=>{const transport=vi.fn(async()=>new Response(JSON.stringify({ok:true}),{status:200}));const client=new SafeHttpClient({baseUrl:"https://production.amocrm.ru",transport});await expect(client.request("GET","/api/v4/account")).resolves.toEqual({ok:true});});
+
   it.each([400,401,403,422])("keeps safe amoCRM error diagnostics for HTTP %i",async(status)=>{const transport=vi.fn(async()=>new Response(JSON.stringify({title:"validation failed",access_token:"must-not-log"}),{status,headers:{"content-type":"application/problem+json"}}));const client=new SafeHttpClient({baseUrl:"https://production.amocrm.ru",readOnly:false,transport});let error:HttpError|undefined;try{await client.request("POST","/api/v4/contacts/chats",{body:"[]"});}catch(value){error=value as HttpError;}expect(error).toMatchObject({status,responseContentType:"application/problem+json",safeMessage:`HTTP request failed with status ${status}`});expect(error?.responseBody).toContain("validation failed");expect(error?.responseBody).not.toContain("must-not-log");});
 
   it("REST write helper cannot bypass the guard", async () => {

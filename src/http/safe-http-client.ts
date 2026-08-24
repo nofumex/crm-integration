@@ -46,7 +46,8 @@ export class SafeHttpClient {
       throw new HttpError(response.status,normalizedMethod,url,parseRetryAfter(response.headers.get("retry-after")),safeResponseBody(body),response.headers.get("content-type")??undefined);
     }
     if (response.status === 204) return undefined as T;
-    return (await response.json()) as T;
+    const body = await response.text();
+    return body.trim() ? JSON.parse(body) as T : undefined as T;
   }
 }
 
