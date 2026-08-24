@@ -43,7 +43,7 @@ interface Options {
   logger?: any;
   bodyLimit?: number;
   rateLimitMax?: number;
-  oauth?: { redirectUri?: string; secrets?: SecretStore };
+  oauth?: { redirectUri?: string; secrets?: SecretStore; exchangeAuthorizationCode?: (code: string) => Promise<void> };
 }
 
 const adminHtmlPath = join(dirname(fileURLToPath(import.meta.url)), "../../public/admin/index.html");
@@ -88,7 +88,14 @@ export function buildWebhookServer(o: Options): FastifyInstance {
     if (!o.oauth?.redirectUri) return reply.code(503).type("text/plain; charset=utf-8").send("OAuth callback is not configured");
     const configured = new URL(o.oauth.redirectUri);
     if (configured.pathname !== "/oauth/callback") return reply.code(503).type("text/plain; charset=utf-8").send("OAuth callback URI is misconfigured");
-    if (!textValue((req.query as Record<string, unknown>)?.code)) return reply.code(400).type("text/plain; charset=utf-8").send("Missing OAuth authorization code");
+    const code = textValue((req.query as Record<string, unknown>)?.code);
+    if (!code) return reply.code(400).type("text/plain; charset=utf-8").send("Missing OAuth authorization code");
+    if (!o.oauth.exchangeAuthorizationCode) return reply.code(503).type("text/plain; charset=utf-8").send("OAuth token exchange is not configured");
+    try {
+      await o.oauth.exchangeAuthorizationCode(code);
+    } catch {
+      return reply.code(502).type("text/plain; charset=utf-8").send("OAuth token exchange failed");
+    }
     return reply.type("text/html; charset=utf-8").send("<!doctype html><title>amoCRM OAuth</title><p>Авторизация amoCRM завершена. Это окно можно закрыть.</p>");
   });
 
