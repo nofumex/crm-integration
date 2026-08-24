@@ -20,8 +20,6 @@ export interface AccountRepository {
   get(id: string): Promise<MessengerAccount | undefined>;
   findByProvider(messenger: MessengerKind, providerAccountId: string): Promise<MessengerAccount | undefined>;
   findByScope(scopeId: string): Promise<MessengerAccount | undefined>;
-  findByScopeAndSource(scopeId:string,sourceExternalId:string):Promise<MessengerAccount|undefined>;
-  findBySource(amoAccountId: string, sourceExternalId: string): Promise<MessengerAccount | undefined>;
   listEnabled(): Promise<MessengerAccount[]>;
   listAll(): Promise<MessengerAccount[]>;
   upsert(account: MessengerAccount): Promise<void>;
