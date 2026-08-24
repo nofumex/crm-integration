@@ -12,10 +12,10 @@ export class WhatsAppPersonalUnavailableError extends Error{constructor(){super(
 export class MaxPersonalUnavailableError extends Error{constructor(){super("MAX Personal has no public, documented first-party linked-device API/SDK; runtime activation is refused");this.name="MaxPersonalUnavailableError";}}
 
 export class AdapterFactory {
- constructor(private readonly secrets:SecretStore,private readonly queue:JobQueue,private readonly mediaStore?:MediaStore,private readonly maxMediaBytes=25*1024*1024,private readonly telegramSettings?:{apiId:number;apiHash:string}){}
+ constructor(private readonly secrets:SecretStore,private readonly queue:JobQueue,private readonly mediaStore?:MediaStore,private readonly maxMediaBytes=25*1024*1024,private readonly telegramSettings?:{apiId:number;apiHash:string},private readonly logger?:{info(data:unknown,message?:string):void}){}
  async create(account:MessengerAccount):Promise<MessengerAdapter>{
   let adapter:MessengerAdapter;
-  if(account.messenger==="telegram"){const s=await this.required<TelegramSecret>(account.credentialRef);if(s.authorized===false||!s.session.trim())throw new Error("Telegram authorization required");if(!this.telegramSettings)throw new Error("Global Telegram settings are missing");adapter=new TelegramAdapter({accountId:account.id,apiId:this.telegramSettings.apiId,apiHash:this.telegramSettings.apiHash,session:s.session,mediaStore:this.mediaStore,maxMediaBytes:this.maxMediaBytes});}
+  if(account.messenger==="telegram"){const s=await this.required<TelegramSecret>(account.credentialRef);if(s.authorized===false||!s.session.trim())throw new Error("Telegram authorization required");if(!this.telegramSettings)throw new Error("Global Telegram settings are missing");adapter=new TelegramAdapter({accountId:account.id,apiId:this.telegramSettings.apiId,apiHash:this.telegramSettings.apiHash,session:s.session,mediaStore:this.mediaStore,maxMediaBytes:this.maxMediaBytes,logger:this.logger});}
   else if(account.messenger==="whatsapp")throw new WhatsAppPersonalUnavailableError();
   else throw new MaxPersonalUnavailableError();
   adapter.onInbound(message=>this.enqueueInbound(message));

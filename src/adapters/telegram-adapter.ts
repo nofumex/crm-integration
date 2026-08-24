@@ -18,6 +18,7 @@ export interface TelegramOptions {
   client?: TelegramClient;
   maxMediaBytes?: number;
   timeoutMs?:number;
+  logger?: { info(data: unknown, message?: string): void };
 }
 
 export interface TelegramAuthorizationPrompts {
@@ -83,6 +84,7 @@ export class TelegramAdapter implements MessengerAdapter {
     let resolved:any;
     try{resolved=await withTimeout((this.client as any).invoke(new Api.contacts.ResolvePhone({phone})),this.timeout());}
     catch{throw new TelegramRecipientResolutionError();}
+    this.options.logger?.info(resolvePhoneDiagnostics(resolved),"Telegram contacts.resolvePhone result");
     const peerUserId=resolved?.peer?.userId;const entity=(resolved?.users??[]).find((user:any)=>String(user?.id)===String(peerUserId));
     if(!entity)throw new TelegramRecipientResolutionError();
     let inputPeer:any;try{inputPeer=await withTimeout(this.client.getInputEntity(entity),this.timeout());}catch{throw new TelegramRecipientResolutionError();}
@@ -159,6 +161,20 @@ function telegramParticipant(entity:any,fallbackId:string,inputPeer?:any):Normal
   return {externalId,displayName:name||username||externalId,...(username?{username}:{}),...(phone?{phone}:{}),...(accessHash!==undefined?{recipientReference:{kind:"telegram_input_peer_user",userId,accessHash:String(accessHash)}}:{}),...(Object.keys(profile).length?{profile}:{})};
 }
 function nonEmpty(value:unknown):string|undefined{return typeof value==="string"&&value.trim()?value.trim():undefined;}
+
+function resolvePhoneDiagnostics(resolved: any): Record<string, unknown> {
+  const users = Array.isArray(resolved?.users) ? resolved.users : [];
+  return {
+    hasPeer: Boolean(resolved?.peer),
+    usersCount: users.length,
+    peerUserIdPresent: resolved?.peer?.userId !== undefined && resolved?.peer?.userId !== null,
+    users: users.map((user: any) => ({
+      ...(user?.id !== undefined ? { id: String(user.id) } : {}),
+      hasAccessHash: user?.accessHash !== undefined && user?.accessHash !== null,
+      ...(typeof user?.className === "string" ? { className: user.className } : {}),
+    })),
+  };
+}
 
 function codeDelivery(sent:any):TelegramCodeDelivery{return{method:deliveryMethod(sent?.type?.className),...(sent?.nextType?{nextMethod:deliveryMethod(sent.nextType.className)}:{}),canResend:Boolean(sent?.nextType)};}
 function deliveryMethod(className:unknown):TelegramCodeDelivery["method"]{const value=String(className??"");if(/App$/.test(value))return"app";if(/Sms$|SmsWord$|SmsPhrase$|FirebaseSms$|FragmentSms$/.test(value))return"sms";if(/Email/.test(value))return"email";return"other";}
