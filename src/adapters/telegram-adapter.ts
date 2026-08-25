@@ -116,7 +116,7 @@ export class TelegramAdapter implements MessengerAdapter {
       const chatId = String(msg.chatId ?? msg.peerId?.userId ?? msg.peerId?.chatId ?? msg.peerId?.channelId);
       const senderId = String(msg.senderId ?? msg.peerId?.userId ?? "unknown");
       let sender:NormalizedParticipant;
-      try { const entity=await withTimeout(this.client.getEntity(msg.senderId ?? senderId),this.timeout());sender=telegramParticipant(entity,senderId,await withTimeout(this.client.getInputEntity(entity),this.timeout())); }
+      try { let entity:any=msg.sender;if(!entity&&typeof msg.getSender==="function")entity=await withTimeout(msg.getSender(),this.timeout());if(!entity)entity=await withTimeout(this.client.getEntity(msg.senderId ?? senderId),this.timeout());let inputPeer:any=msg.inputSender;if(!inputPeer&&typeof msg.getInputSender==="function")inputPeer=await withTimeout(msg.getInputSender(),this.timeout());if(!inputPeer)inputPeer=await withTimeout(this.client.getInputEntity(entity),this.timeout());sender=telegramParticipant(entity,senderId,inputPeer); }
       catch { try { sender=telegramParticipant(undefined,senderId,await withTimeout(this.client.getInputEntity(msg.senderId ?? senderId),this.timeout())); } catch { sender=telegramParticipant(undefined,senderId); } }
       const attachments: NormalizedAttachment[] = msg.media ? [{ kind: inferTelegramMediaKind(msg.media), id: String(msg.id) }] : [];
       if (msg.media && this.options.mediaStore) {
