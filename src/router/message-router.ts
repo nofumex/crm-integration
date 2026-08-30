@@ -18,7 +18,7 @@ export class MessageRouter {
  constructor(private readonly options:Options){this.now=options.now??(()=>new Date());}
 
  async routeInbound(input:NormalizedMessage):Promise<void>{
-  const message={...input,occurredAt:new Date(input.occurredAt)};const account=await this.options.accounts.get(message.accountId);if(!account||account.messenger!==message.messenger)throw new Error(`Unknown ${message.messenger} account ${message.accountId}`);if(!account.amoScopeId)throw new Error(`Account ${account.id} has no amoCRM scope_id`);
+  const message={...input,occurredAt:new Date(input.occurredAt)};const account=await this.options.accounts.get(message.accountId);if(!account||account.messenger!==message.messenger)throw new Error(`Unknown ${message.messenger} account ${message.accountId}`);if(account.state!=="connected")return;if(!account.amoScopeId)throw new Error(`Account ${account.id} has no amoCRM scope_id`);
   let mapping=await this.options.store.getConversation(message.messenger,account.id,message.conversationId);
   const recipientSecretRef=await this.persistInboundPeer(message);
   if(!mapping){mapping={messenger:message.messenger,messengerAccountId:account.id,providerConversationId:message.conversationId,providerRecipientId:message.sender.externalId,...(recipientSecretRef?{providerRecipientSecretRef:recipientSecretRef}:{}),...(message.sender.profile?{providerProfile:message.sender.profile}:{}),amoScopeId:account.amoScopeId,writeFirstState:"none",lastInboundAt:message.occurredAt};

@@ -26,6 +26,24 @@ describe.skipIf(!url)("PostgreSQL production storage", () => {
     expect((await accounts.findByProvider("telegram", "202"))?.id).toBe("two");
   });
 
+  it("atomically removes an account, mappings, credential, and Telegram peer secrets", async () => {
+    const secrets = new EncryptedPostgresSecretStore(pool, "integration-master-key-that-is-long-enough");
+    const accounts = new PostgresAccountRepository(pool);
+    await secrets.put("telegram:delete", { session: "session" });
+    await secrets.put("telegram-peer:delete:peer-1", { kind:"telegram_input_peer_user", userId:"peer-1", accessHash:"hash" });
+    await secrets.put("telegram-peer:delete:peer-2", { kind:"telegram_input_peer_user", userId:"peer-2", accessHash:"hash" });
+    await accounts.upsert({ id:"delete", messenger:"telegram", providerAccountId:"303", credentialRef:"telegram:delete", amoAccountId:"amo-test", sourceExternalId:"src-delete", config:{}, state:"disconnected" });
+    await pool.query("INSERT INTO conversation_mappings(messenger,messenger_account_id,provider_conversation_id,provider_recipient_id,amo_scope_id) VALUES('telegram','delete','peer-1','peer-1','scope')");
+    await pool.query("INSERT INTO message_mappings(messenger,messenger_account_id,messenger_message_id,provider_conversation_id,direction,status,status_at,occurred_at) VALUES('telegram','delete','message-1','peer-1','inbound','sent',now(),now())");
+    expect(await accounts.delete("delete")).toBe(true);
+    expect(await accounts.get("delete")).toBeUndefined();
+    expect((await pool.query("SELECT 1 FROM conversation_mappings WHERE messenger_account_id='delete'")).rowCount).toBe(0);
+    expect((await pool.query("SELECT 1 FROM message_mappings WHERE messenger_account_id='delete'")).rowCount).toBe(0);
+    expect(await secrets.get("telegram:delete")).toBeUndefined();
+    expect(await secrets.get("telegram-peer:delete:peer-1")).toBeUndefined();
+    expect(await secrets.get("telegram-peer:delete:peer-2")).toBeUndefined();
+  });
+
   it("deduplicates, orders partitions, and recovers a crashed lease", async () => {
     const queue = new PostgresJobQueue(pool);
     const first = await queue.enqueue({ kind:"messenger.inbound", partitionKey:"chat-A", dedupeKey:"event-1", payload:{ text:"one" } });

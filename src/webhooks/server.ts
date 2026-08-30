@@ -138,6 +138,9 @@ export function buildWebhookServer(o: Options): FastifyInstance {
     app.post("/admin/accounts/:accountId/reconnect", { preHandler: admin(o.adminToken) }, async (req) =>
       o.accountAdmin!.reconnect(String((req.params as any).accountId)),
     );
+    app.delete("/admin/accounts/:accountId", { preHandler: admin(o.adminToken) }, async (req) =>
+      o.accountAdmin!.delete(String((req.params as any).accountId)),
+    );
   }
 
   if (o.onboarding) {

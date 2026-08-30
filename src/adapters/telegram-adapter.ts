@@ -43,7 +43,7 @@ export class TelegramAdapter implements MessengerAdapter {
     this.accountId=options.accountId;
     this.client = options.client ?? new TelegramClient(new StringSession(options.session), options.apiId, options.apiHash, {
       connectionRetries: options.connectionRetries ?? 10,
-      autoReconnect: true,
+      autoReconnect: false,
     });
   }
 

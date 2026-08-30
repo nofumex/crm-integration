@@ -24,6 +24,8 @@ export interface AccountRepository {
   listEnabled(): Promise<MessengerAccount[]>;
   listAll(): Promise<MessengerAccount[]>;
   upsert(account: MessengerAccount): Promise<void>;
+  /** Removes the account and all database-owned account data atomically. */
+  delete(id: string): Promise<boolean>;
   setScope(id: string, scopeId: string): Promise<void>;
   setState(id: string, state: AccountState, error?: string): Promise<void>;
 }

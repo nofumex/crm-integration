@@ -39,6 +39,14 @@ export class AccountAdminService {
     const account = await this.accounts.get(accountId);
     return { ok: true, state: account?.state ?? "connecting" };
   }
+
+  async delete(accountId: string): Promise<{ ok: true }> {
+    if (!await this.accounts.get(accountId)) throw new Error(`Unknown account ${accountId}`);
+    await this.onboarding?.cancel(accountId);
+    await this.supervisor.disconnectAccount(accountId);
+    if (!await this.accounts.delete(accountId)) throw new Error(`Unknown account ${accountId}`);
+    return { ok: true };
+  }
 }
 
 function toView(account: MessengerAccount, onboardingStatus: AdminAccountView["onboardingStatus"], codeDelivery?: TelegramCodeDelivery): AdminAccountView {

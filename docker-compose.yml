@@ -52,6 +52,8 @@ services:
 
   app:
     build: .
+    ports:
+      - "3005:3005"
     restart: unless-stopped
     env_file: .env
     environment:
@@ -67,7 +69,7 @@ services:
       clamav:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:3000/health/live"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:3005/health/live"]
       interval: 15s
       timeout: 5s
       retries: 5

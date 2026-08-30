@@ -247,6 +247,7 @@
               ${acc.messenger === "telegram" && acc.state === "reconnect_required" ? `<button class="btn btn-primary btn-sm" data-action="reauthorize">Авторизовать заново</button>` : ""}
               <button class="btn btn-secondary btn-sm" data-action="reconnect">Reconnect</button>
               <button class="btn btn-danger btn-sm" data-action="disconnect">Disconnect</button>
+              <button class="btn btn-danger btn-sm" data-action="delete">Delete</button>
             </div>
           </div>`;
       }).join("");
@@ -288,6 +289,10 @@
           await api(`/admin/accounts/${accountId}/disconnect`, { method: "POST" });
         } else if (action === "reconnect") {
           await api(`/admin/accounts/${accountId}/reconnect`, { method: "POST" });
+        } else if (action === "delete") {
+          if (!confirm("Delete this account and all its mappings? This cannot be undone.")) return;
+          await api(`/admin/accounts/${accountId}`, { method: "DELETE" });
+          if (wizard.accountId === accountId) closeWizard();
         } else if (action === "reauthorize") {
           openWizard(accounts.find(a => a.id === accountId));
           return;
