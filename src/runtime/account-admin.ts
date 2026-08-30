@@ -41,8 +41,13 @@ export class AccountAdminService {
   }
 
   async delete(accountId: string): Promise<{ ok: true }> {
+    if (this.onboarding) return this.onboarding.withAccountLock(accountId, () => this.deleteLocked(accountId));
+    return this.deleteLocked(accountId);
+  }
+
+  private async deleteLocked(accountId: string): Promise<{ ok: true }> {
     if (!await this.accounts.get(accountId)) throw new Error(`Unknown account ${accountId}`);
-    await this.onboarding?.cancel(accountId);
+    await this.onboarding?.cancelLocked(accountId);
     await this.supervisor.disconnectAccount(accountId);
     if (!await this.accounts.delete(accountId)) throw new Error(`Unknown account ${accountId}`);
     return { ok: true };

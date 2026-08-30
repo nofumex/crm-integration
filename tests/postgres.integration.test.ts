@@ -9,7 +9,7 @@ import { PostgresDeliveryReconciliationStore } from "../src/storage/delivery-rec
 const url = process.env.TEST_DATABASE_URL;
 describe.skipIf(!url)("PostgreSQL production storage", () => {
   const pool = new Pool({ connectionString: url });
-  beforeAll(async () => { await migrate(pool);expect(Number((await pool.query("SELECT max(version) version FROM schema_migrations")).rows[0].version)).toBe(2);await pool.query("TRUNCATE jobs, message_mappings, conversation_mappings, messenger_accounts, secrets CASCADE"); });
+  beforeAll(async () => { await migrate(pool);expect(Number((await pool.query("SELECT max(version) version FROM schema_migrations")).rows[0].version)).toBe(6);await pool.query("TRUNCATE jobs, message_mappings, conversation_mappings, messenger_accounts, secrets CASCADE"); });
   afterAll(async () => { await pool.end(); });
 
   it("persists encrypted secrets and isolated accounts", async () => {
