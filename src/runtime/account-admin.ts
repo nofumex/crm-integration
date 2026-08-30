@@ -30,6 +30,12 @@ export class AccountAdminService {
   }
 
   async disconnect(accountId: string): Promise<{ ok: true }> {
+    if (this.onboarding) return this.onboarding.withAccountLock(accountId, () => this.disconnectLocked(accountId));
+    return this.disconnectLocked(accountId);
+  }
+
+  private async disconnectLocked(accountId: string): Promise<{ ok: true }> {
+    await this.onboarding?.cancelLocked(accountId);
     await this.supervisor.disconnectAccount(accountId);
     return { ok: true };
   }

@@ -29,6 +29,22 @@ describe("account lifecycle",()=>{
     await expect(admin.delete("a1")).resolves.toEqual({ok:true}); expect(pendingDisconnect).toHaveBeenCalledOnce(); expect(await accounts.get("a1")).toBeUndefined(); await expect(admin.delete("a1")).rejects.toThrow("Unknown account");
   });
 
+  it("disconnect cancels an awaiting-code onboarding",async()=>{
+    const accounts=new InMemoryAccountRepository(),secrets=new InMemorySecretStore(),pendingDisconnect=vi.fn(async()=>undefined),supervisor={disconnectAccount:vi.fn(async()=>undefined)} as any;
+    await accounts.upsert({id:"a1",messenger:"telegram",providerAccountId:"p",credentialRef:"telegram:a1",amoAccountId:"amo",sourceExternalId:"src",config:{},state:"connecting"}); await secrets.put("telegram:a1",{session:""});
+    const onboarding=new TelegramOnboardingService(secrets,accounts,{apiId:1,apiHash:"h"},()=>({beginAuthorization:vi.fn(async()=>({method:"app" as const,canResend:false})),submitAuthorizationCode:vi.fn(),submitAuthorizationPassword:vi.fn(),resendAuthorizationCode:vi.fn(),authorizationSession:()=>"",disconnect:pendingDisconnect}));
+    await onboarding.start({accountId:"a1",phone:"+1",amoAccountId:"amo"}); const admin=new AccountAdminService(accounts,supervisor,onboarding);
+    await expect(admin.disconnect("a1")).resolves.toEqual({ok:true}); expect(onboarding.getStatus("a1")).toBeNull(); expect(pendingDisconnect).toHaveBeenCalledOnce(); expect(supervisor.disconnectAccount).toHaveBeenCalledWith("a1"); await expect(onboarding.submitCode("a1","12345")).rejects.toThrow("No active onboarding");
+  });
+
+  it("disconnect cancels an awaiting-password onboarding",async()=>{
+    const accounts=new InMemoryAccountRepository(),secrets=new InMemorySecretStore(),pendingDisconnect=vi.fn(async()=>undefined),supervisor={disconnectAccount:vi.fn(async()=>undefined)} as any;
+    await accounts.upsert({id:"a1",messenger:"telegram",providerAccountId:"p",credentialRef:"telegram:a1",amoAccountId:"amo",sourceExternalId:"src",config:{},state:"connecting"}); await secrets.put("telegram:a1",{session:""});
+    const onboarding=new TelegramOnboardingService(secrets,accounts,{apiId:1,apiHash:"h"},()=>({beginAuthorization:vi.fn(async()=>({method:"app" as const,canResend:false})),submitAuthorizationCode:vi.fn(async()=>"awaiting_password" as const),submitAuthorizationPassword:vi.fn(),resendAuthorizationCode:vi.fn(),authorizationSession:()=>"",disconnect:pendingDisconnect}));
+    await onboarding.start({accountId:"a1",phone:"+1",amoAccountId:"amo"}); await onboarding.submitCode("a1","12345"); const admin=new AccountAdminService(accounts,supervisor,onboarding);
+    await expect(admin.disconnect("a1")).resolves.toEqual({ok:true}); expect(onboarding.getStatus("a1")).toBeNull(); expect(pendingDisconnect).toHaveBeenCalledOnce(); await expect(onboarding.submitPassword("a1","password")).rejects.toThrow("No active onboarding");
+  });
+
   it("serializes delete behind an in-flight authorization and leaves no secrets behind",async()=>{
     const accounts=new InMemoryAccountRepository(), secrets=new InMemorySecretStore(), code=deferred<"completed"|"awaiting_password">();
     await accounts.upsert({id:"a1",messenger:"telegram",providerAccountId:"p",credentialRef:"telegram:a1",amoAccountId:"amo",sourceExternalId:"src",config:{},state:"connecting"}); await secrets.put("telegram:a1",{session:"old"}); await secrets.put("telegram-peer:a1:p",{accessHash:"hash"});
