@@ -18,7 +18,7 @@ export interface TelegramOptions {
   client?: TelegramClient;
   maxMediaBytes?: number;
   timeoutMs?:number;
-  logger?: { info(data: unknown, message?: string): void };
+  logger?: { info(data: unknown, message?: string): void; error?(data:unknown,message?:string):void };
 }
 
 export interface TelegramAuthorizationPrompts {
@@ -37,6 +37,8 @@ export class TelegramAdapter implements MessengerAdapter {
   private inbound?: InboundHandler;
   private status?: StatusHandler;
   private handlerInstalled = false;
+  private readonly recentlySent = new Map<string,number>();
+  private readonly inFlightText = new Set<string>();
   private authorization?:{phone:string;phoneCodeHash:string;delivery:TelegramCodeDelivery};
 
   constructor(private readonly options: TelegramOptions) {
@@ -101,42 +103,83 @@ export class TelegramAdapter implements MessengerAdapter {
 
   async send(command: SendMessageCommand): Promise<SendResult> {
     const recipient=await this.resolveInputPeer(command);
-    const attachment = command.attachments?.[0];
-    const result = await withTimeout(attachment?.url
-      ? this.client.sendFile(recipient, { file: attachment.url, caption: command.text, ...(command.replyToId ? { replyTo: Number(command.replyToId) } : {}) })
-      : this.client.sendMessage(recipient, { message: command.text ?? "", ...(command.replyToId ? { replyTo: Number(command.replyToId) } : {}) }),this.timeout());
-    return { externalMessageId: String((result as any).id), status: "sent", occurredAt: new Date(Number((result as any).date) * 1000) };
+    const attachment=command.attachments?.[0];
+    const identity=command.recipientId+':'+(command.text??'');
+    this.inFlightText.add(identity);
+    try {
+      const result=await withTimeout(attachment?.url
+        ? this.client.sendFile(recipient,{file:attachment.url,caption:command.text,...(command.replyToId?{replyTo:Number(command.replyToId)}:{})})
+        : this.client.sendMessage(recipient,{message:command.text??'',...(command.replyToId?{replyTo:Number(command.replyToId)}:{})}),this.timeout());
+      this.recentlySent.set(command.recipientId+':'+String((result as any).id),Date.now()+120000);
+      return {externalMessageId:String((result as any).id),status:'sent',occurredAt:new Date(Number((result as any).date)*1000)};
+    } finally {this.inFlightText.delete(identity);}
   }
 
   private installHandler(): void {
     if (this.handlerInstalled) return;
-    this.client.addEventHandler(async (event: any) => {
-      if (!this.inbound || event.message?.out) return;
-      const msg = event.message;
-      const chatId = String(msg.chatId ?? msg.peerId?.userId ?? msg.peerId?.chatId ?? msg.peerId?.channelId);
-      const senderId = String(msg.senderId ?? msg.peerId?.userId ?? "unknown");
-      let sender:NormalizedParticipant;
-      try { let entity:any=msg.sender;if(!entity&&typeof msg.getSender==="function")entity=await withTimeout(msg.getSender(),this.timeout());if(!entity)entity=await withTimeout(this.client.getEntity(msg.senderId ?? senderId),this.timeout());let inputPeer:any=msg.inputSender;if(!inputPeer&&typeof msg.getInputSender==="function")inputPeer=await withTimeout(msg.getInputSender(),this.timeout());if(!inputPeer)inputPeer=await withTimeout(this.client.getInputEntity(entity),this.timeout());sender=telegramParticipant(entity,senderId,inputPeer); }
-      catch { try { sender=telegramParticipant(undefined,senderId,await withTimeout(this.client.getInputEntity(msg.senderId ?? senderId),this.timeout())); } catch { sender=telegramParticipant(undefined,senderId); } }
-      const attachments: NormalizedAttachment[] = msg.media ? [{ kind: inferTelegramMediaKind(msg.media), id: String(msg.id) }] : [];
-      if (msg.media && this.options.mediaStore) {
-        const declaredSize=Number(msg.media?.document?.size??0);if(declaredSize>(this.options.maxMediaBytes??25*1024*1024))throw new Error("Telegram media exceeds size limit");
-        const downloaded = await withTimeout(this.client.downloadMedia(msg.media, {}),this.timeout());
-        if (downloaded) {
-          const data = typeof downloaded === "string" ? await readFile(downloaded) : Buffer.from(downloaded);
-          const published = await this.options.mediaStore.put({ data, kind: attachments[0]!.kind, sourceId: `${chatId}:${msg.id}` });
-          attachments[0]!.url = published.url; attachments[0]!.size = published.size;
+    this.client.addEventHandler(async (event:any)=>{
+      if(!this.inbound||!event.message)return;
+      const msg=event.message;
+      const chatId=String(msg.chatId??msg.peerId?.userId??'');
+      if(!/^\d+$/.test(chatId))return; // Personal 1:1 chats only. Never sync groups/channels here.
+      if(msg.peerId?.className&&msg.peerId.className!=='PeerUser')return;
+      const outgoing=Boolean(msg.out);
+      for(const [key,expiry] of this.recentlySent)if(expiry<Date.now())this.recentlySent.delete(key);
+      if(outgoing&&(this.recentlySent.has(chatId+':'+msg.id)||this.inFlightText.has(chatId+':'+(msg.message??''))))return;
+      try {
+        let peer:NormalizedParticipant;
+        if(outgoing){
+          let entity:any=msg.chat;
+          if(!entity&&typeof msg.getChat==='function')entity=await withTimeout(msg.getChat(),this.timeout());
+          if(!entity)entity=await withTimeout(this.client.getEntity(msg.peerId??msg.chatId),this.timeout());
+          let inputPeer:any=msg.inputChat;
+          if(!inputPeer&&typeof msg.getInputChat==='function')inputPeer=await withTimeout(msg.getInputChat(),this.timeout());
+          if(!inputPeer)inputPeer=await withTimeout(this.client.getInputEntity(entity),this.timeout());
+          peer=telegramParticipant(entity,chatId,inputPeer);
+        }else{
+          const senderId=String(msg.senderId??msg.peerId?.userId??chatId);
+          try{
+            let entity:any=msg.sender;
+            if(!entity&&typeof msg.getSender==='function')entity=await withTimeout(msg.getSender(),this.timeout());
+            if(!entity)entity=await withTimeout(this.client.getEntity(msg.senderId??senderId),this.timeout());
+            let inputPeer:any=msg.inputSender;
+            if(!inputPeer&&typeof msg.getInputSender==='function')inputPeer=await withTimeout(msg.getInputSender(),this.timeout());
+            if(!inputPeer)inputPeer=await withTimeout(this.client.getInputEntity(entity),this.timeout());
+            peer=telegramParticipant(entity,senderId,inputPeer);
+          }catch{
+            try{peer=telegramParticipant(undefined,senderId,await withTimeout(this.client.getInputEntity(msg.senderId??senderId),this.timeout()));}
+            catch{peer=telegramParticipant(undefined,senderId);}
+          }
         }
+        const kind=msg.media?inferTelegramMediaKind(msg.media):undefined;
+        const mime=msg.media?.document?.mimeType??(msg.media?.photo?'image/jpeg':undefined);
+        const attr=msg.media?.document?.attributes?.find((a:any)=>typeof a?.fileName==='string');
+        const name=attr?.fileName??(kind==='image'?'photo.jpg':kind==='video'?'video.mp4':kind==='audio'?'audio.mp3':kind==='voice'?'voice.ogg':'attachment.bin');
+        const attachments:NormalizedAttachment[]=kind?[{kind,id:String(msg.id),mimeType:mime,fileName:name}]:[];
+        if(kind){
+          if(!this.options.mediaStore)throw new Error('MediaStore is not configured');
+          const declared=Number(msg.media?.document?.size??0);
+          if(declared>(this.options.maxMediaBytes??25*1024*1024))throw new Error('Telegram media exceeds size limit');
+          const downloaded=await withTimeout(this.client.downloadMedia(msg.media,{}),Math.max(this.timeout(),60000));
+          if(!downloaded)throw new Error('Telegram media download returned empty data');
+          const data=typeof downloaded==='string'?await readFile(downloaded):Buffer.from(downloaded);
+          const published=await this.options.mediaStore.put({data,kind,mimeType:mime,fileName:name,sourceId:chatId+':'+msg.id});
+          attachments[0]={...attachments[0]!,url:published.url,size:published.size};
+        }
+        const normalized:NormalizedMessage={id:String(msg.id),messenger:'telegram',accountId:this.options.accountId,
+          conversationId:chatId,direction:outgoing?'outbound':'inbound',
+          sender:outgoing?{externalId:'tg-self-'+this.options.accountId,displayName:'Telegram'}:peer,
+          ...(outgoing?{recipient:peer}:{}),text:msg.message||undefined,attachments,
+          replyToId:msg.replyTo?.replyToMsgId?String(msg.replyTo.replyToMsgId):undefined,
+          mediaGroupId:msg.groupedId?String(msg.groupedId):undefined,
+          occurredAt:new Date(Number(msg.date)*1000),status:'delivered'};
+        await this.inbound(normalized);
+      }catch(error){
+        this.options.logger?.error?.({accountId:this.options.accountId,telegramMessageId:String(msg.id),peerId:chatId,
+          direction:outgoing?'outbound':'inbound',errorName:(error as Error)?.name,errorMessage:(error as Error)?.message},'Telegram event media/queue processing failed');
+        throw error;
       }
-      const normalized: NormalizedMessage = {
-        id: String(msg.id), messenger: "telegram", accountId: this.options.accountId, conversationId: chatId,
-        direction: "inbound", sender, text: msg.message || undefined,
-        attachments, replyToId: msg.replyTo?.replyToMsgId ? String(msg.replyTo.replyToMsgId) : undefined,
-        mediaGroupId: msg.groupedId ? String(msg.groupedId) : undefined,
-        occurredAt: new Date(Number(msg.date) * 1000), status: "delivered", raw: msg,
-      };
-      await this.inbound(normalized);
-    }, new NewMessage({ incoming: true }));
+    },new NewMessage({}));
     this.handlerInstalled = true;
   }
   private timeout(){return this.options.timeoutMs??15_000;}

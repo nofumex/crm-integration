@@ -5,6 +5,7 @@ import Fastify, { LogController, type FastifyInstance } from "fastify";
 import rateLimit from "@fastify/rate-limit";
 import { timingSafeEqual } from "node:crypto";
 import type { JobQueue } from "../queue/job-queue.js";
+import type { S3MediaStore } from "../media/s3-media-store.js";
 import { verifyAmoWebhookSignature } from "../amocrm/chats-client.js";
 import type { TelegramOnboardingService } from "../runtime/telegram-onboarding.js";import type { TelegramQrOnboardingService } from "../runtime/qr-onboarding.js";
 import type { AccountManagementService } from "../runtime/account-management.js";
@@ -31,6 +32,7 @@ interface BootstrapInfo {
 
 interface Options {
   queue: JobQueue;
+  publicMedia?: S3MediaStore;
   amoChannelSecret?: string;
   readiness?: () => Promise<{ ready: boolean; detail?: unknown }>;
   onboarding?: TelegramOnboardingService;qrOnboarding?: TelegramQrOnboardingService;
@@ -53,6 +55,7 @@ const adminHtmlPath = join(dirname(fileURLToPath(import.meta.url)), "../../publi
 
 export function buildWebhookServer(o: Options): FastifyInstance {
   const app = Fastify({
+    routerOptions: {maxParamLength: 1024},
     loggerInstance: o.logger,
     bodyLimit: o.bodyLimit ?? 2 * 1024 * 1024,
     logController: new LogController({ disableRequestLogging: true }),
@@ -67,6 +70,37 @@ export function buildWebhookServer(o: Options): FastifyInstance {
     }
   });
 
+  if (o.publicMedia) {
+    const mediaHeaders=(reply:any,m:{contentType:string;contentLength?:number;contentRange?:string;partial?:boolean})=>{
+      reply.header('Content-Type',m.contentType);
+      reply.header('X-Content-Type-Options','nosniff');
+      reply.header('Cache-Control','private, max-age=600');
+      reply.header('Accept-Ranges','bytes');
+      if(m.contentLength!==undefined)reply.header('Content-Length',String(m.contentLength));
+      if(m.contentRange)reply.header('Content-Range',m.contentRange);
+      return reply;
+    };
+    app.get('/media/:token',{exposeHeadRoute:false},async(req,reply)=>{
+      const token=String((req.params as any).token);
+      try {
+        const range=header(req,'range');
+        const result=await o.publicMedia!.openPublicToken(token,range);
+        return mediaHeaders(reply,result).code(result.partial?206:200).send(result.body);
+      } catch(error) {
+        if(error instanceof Error&&error.message.startsWith('Invalid media'))return reply.code(404).send({error:'not found'});
+        throw error;
+      }
+    });
+    app.head('/media/:token',async(req,reply)=>{
+      try {
+        const result=await o.publicMedia!.headPublicToken(String((req.params as any).token));
+        return mediaHeaders(reply,result).code(200).send();
+      } catch(error) {
+        if(error instanceof Error&&error.message.startsWith('Invalid media'))return reply.code(404).send();
+        throw error;
+      }
+    });
+  }
   app.get("/health/live", async () => ({ ok: true }));
   app.get("/health/ready", async (_req, reply) => {
     const r = await (o.readiness?.() ?? Promise.resolve({ ready: true }));

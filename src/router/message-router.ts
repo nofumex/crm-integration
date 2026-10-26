@@ -11,13 +11,14 @@ import type { SecretStore } from "../security/secret-store.js";
 import { getTelegramPeer,storeTelegramPeer } from "../runtime/telegram-peer-secrets.js";
 import { TelegramRecipientResolutionError } from "../core/errors.js";
 
-interface Options {store:MappingStore;accounts:AccountRepository;adapters:AdapterRegistry;chats:AmoCrmChatsClient;secrets:SecretStore;contactResolver?:ContactChatResolver;contactSyncEnabled?:boolean;mediaStore?:MediaStore;now?:()=>Date;logger?:{error(data:unknown,message?:string):void};}
+interface Options {store:MappingStore;accounts:AccountRepository;adapters:AdapterRegistry;chats:AmoCrmChatsClient;secrets:SecretStore;contactResolver?:ContactChatResolver;contactSyncEnabled?:boolean;mediaStore?:MediaStore;externalEchoDelayMs?:number;now?:()=>Date;logger?:{error(data:unknown,message?:string):void};}
 
 export class MessageRouter {
  private readonly now:()=>Date;
  constructor(private readonly options:Options){this.now=options.now??(()=>new Date());}
 
  async routeInbound(input:NormalizedMessage):Promise<void>{
+  if(input.direction==="outbound")return this.routeTelegramExternalOutbound(input);
   const message={...input,occurredAt:new Date(input.occurredAt)};const account=await this.options.accounts.get(message.accountId);if(!account||account.messenger!==message.messenger)throw new Error(`Unknown ${message.messenger} account ${message.accountId}`);if(account.state!=="connected")return;if(!account.amoScopeId)throw new Error(`Account ${account.id} has no amoCRM scope_id`);
   let mapping=await this.options.store.getConversation(message.messenger,account.id,message.conversationId);
   const recipientSecretRef=await this.persistInboundPeer(message);
@@ -25,6 +26,43 @@ export class MessageRouter {
   } else {mapping.lastInboundAt=message.occurredAt;if(recipientSecretRef)mapping.providerRecipientSecretRef=recipientSecretRef;mapping.providerRecipientRef=undefined;if(message.sender.profile)mapping.providerProfile=message.sender.profile;/* Mark write-first as linked only after amoCRM accepts the inbound message. */}
   const parts=message.attachments.length?message.attachments:[undefined];let enriched=false;
   for(let i=0;i<parts.length;i++){const externalId=parts.length===1?message.id:`${message.id}:${i}`;if(await this.options.store.findMessageByMessengerId(message.messenger,account.id,externalId))continue;const response:any=await this.options.chats.sendMessage(account.amoScopeId,amoPayload(message,externalId,parts[i],mapping,account.sourceExternalId));const amo=amoResponseIds(response);if(!mapping.amoConversationId&&amo.conversationId)mapping.amoConversationId=amo.conversationId;if(mapping.writeFirstState==="pending")mapping.writeFirstState="linked";try{await this.applyChatContact(mapping);}catch(error){this.options.logger?.error({accountId:account.id,reason:error instanceof Error?error.message:String(error)},"Noncritical amoCRM contact lookup failed after message acceptance");}if(this.options.contactSyncEnabled!==false&&!mapping.amoContactId&&this.options.contactResolver){const phone=message.sender.phone??message.sender.profile?.phone;let contact=phone?await this.options.contactResolver.findExactByPhone(phone):undefined;contact??=await this.options.contactResolver.findExactByTelegramId(message.sender.profile?.telegramId??message.sender.externalId);contact??=await this.options.contactResolver.ensureContact(message.sender);this.applyContact(mapping,contact);}if(this.options.contactSyncEnabled!==false&&!enriched&&mapping.amoContactId!==undefined&&this.options.contactResolver){await this.options.contactResolver.enrich(mapping.amoContactId,message.sender);enriched=true;}await this.options.store.saveMessage({messenger:message.messenger,messengerAccountId:account.id,messengerMessageId:externalId,providerConversationId:message.conversationId,amoMessageId:response?.new_message?.msgid,amoConversationId:mapping.amoConversationId,direction:"inbound",status:"sent",occurredAt:message.occurredAt,statusAt:this.now()});}
+  await this.options.store.upsertConversation(mapping);
+ }
+
+
+ async routeTelegramExternalOutbound(input:NormalizedMessage):Promise<void>{
+  if(input.messenger!=='telegram'||!input.recipient)throw new Error('External Telegram outbound requires peer recipient');
+  const account=await this.options.accounts.get(input.accountId);
+  if(!account||account.state!=='connected'||!account.amoScopeId)return;
+  // App-originated Telegram sends are recorded under provider message ID by routeAmoOutbound.
+  // Let its in-flight transaction finish before deciding that an outgoing update is external.
+  if(await this.options.store.findMessageByMessengerId('telegram',account.id,input.id))return;
+  await new Promise(resolve=>setTimeout(resolve,this.options.externalEchoDelayMs??1400));
+  if(await this.options.store.findMessageByMessengerId('telegram',account.id,input.id))return;
+  const peer=input.recipient;
+  let mapping=await this.options.store.getConversation('telegram',account.id,input.conversationId);
+  if(!mapping){
+    const secret=peer.recipientSecretRef??(peer.recipientReference?await storeTelegramPeer(this.options.secrets,account.id,peer.recipientReference):undefined);
+    mapping={messenger:'telegram',messengerAccountId:account.id,providerConversationId:input.conversationId,
+      providerRecipientId:peer.externalId,...(secret?{providerRecipientSecretRef:secret}:{}),
+      ...(peer.profile?{providerProfile:peer.profile}:{}),amoScopeId:account.amoScopeId,writeFirstState:'none'};
+  }
+  const parts=input.attachments.length?input.attachments:[undefined];
+  for(let i=0;i<parts.length;i++){
+    const id=parts.length===1?input.id:input.id+':'+i;
+    if(await this.options.store.findMessageByMessengerId('telegram',account.id,id))continue;
+    const payload=amoPayload({...input,sender:peer},id,parts[i],mapping,account.sourceExternalId) as any;
+    payload.payload.sender={id:'tg-self-'+account.id,name:account.displayName??'Telegram '+account.providerAccountId};
+    payload.payload.receiver={id:peer.externalId,name:peer.displayName??peer.username??peer.externalId,
+      ...(peer.phone?{profile:{phone:peer.phone}}:{}),...(peer.username?{profile_link:'https://t.me/'+peer.username.replace(/^@/,'')}: {})};
+    payload.payload.silent=true;
+    const response:any=await this.options.chats.sendMessage(account.amoScopeId,payload);
+    const newConversation=amoResponseIds(response).conversationId;
+    if(!mapping.amoConversationId&&newConversation)mapping.amoConversationId=newConversation;
+    await this.options.store.saveMessage({messenger:'telegram',messengerAccountId:account.id,messengerMessageId:id,
+      providerConversationId:input.conversationId,amoMessageId:response?.new_message?.msgid,
+      amoConversationId:mapping.amoConversationId,direction:'outbound',status:'sent',occurredAt:new Date(input.occurredAt),statusAt:this.now()});
+  }
   await this.options.store.upsertConversation(mapping);
  }
 
