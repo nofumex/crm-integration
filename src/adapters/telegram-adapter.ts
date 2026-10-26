@@ -136,12 +136,26 @@ export class TelegramAdapter implements MessengerAdapter {
       try {
         let peer:NormalizedParticipant;
         if(outgoing){
+          // Outgoing updates already contain the peer user ID. Telegram may not
+          // have its access hash cached yet, so optional entity lookup must not
+          // prevent an otherwise valid outgoing message from being imported.
           let entity:any=msg.chat;
-          if(!entity&&typeof msg.getChat==='function')entity=await withTimeout(msg.getChat(),this.timeout());
-          if(!entity)entity=await withTimeout(this.client.getEntity(msg.peerId??msg.chatId),this.timeout());
           let inputPeer:any=msg.inputChat;
-          if(!inputPeer&&typeof msg.getInputChat==='function')inputPeer=await withTimeout(msg.getInputChat(),this.timeout());
-          if(!inputPeer)inputPeer=await withTimeout(this.client.getInputEntity(entity),this.timeout());
+          if(!entity&&typeof msg.getChat==='function'){
+            try{entity=await withTimeout(msg.getChat(),this.timeout());}catch{/* Optional Telegram entity metadata. */}
+          }
+          if(!inputPeer&&typeof msg.getInputChat==='function'){
+            try{inputPeer=await withTimeout(msg.getInputChat(),this.timeout());}catch{/* Optional input peer. */}
+          }
+          if(!entity&&inputPeer){
+            try{entity=await withTimeout(this.client.getEntity(inputPeer),this.timeout());}catch{/* Optional. */}
+          }
+          if(!entity){
+            try{entity=await withTimeout(this.client.getEntity(msg.peerId??msg.chatId),this.timeout());}catch{/* No cached access hash. */}
+          }
+          if(!inputPeer&&entity){
+            try{inputPeer=await withTimeout(this.client.getInputEntity(entity),this.timeout());}catch{/* Optional. */}
+          }
           peer=telegramParticipant(entity,chatId,inputPeer);
         }else{
           const senderId=String(msg.senderId??msg.peerId?.userId??chatId);
