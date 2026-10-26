@@ -251,7 +251,7 @@
             ${acc.onboardingStatus === "awaiting_code" && acc.codeDelivery ? `<div class="account-meta">Код: ${esc(deliveryLabel(acc.codeDelivery))}${acc.codeDelivery.nextMethod ? `; затем: ${esc(deliveryLabel({method:acc.codeDelivery.nextMethod}))}` : ""}</div>` : ""}
             ${webhook ? `<div class="account-meta" style="margin-top:8px">Webhook: <span class="mono">${esc(webhook)}</span></div>` : ""}
             <div class="actions">
-              ${!acc.amoScopeId ? `<button class="btn btn-secondary btn-sm" data-action="amocrm-connect">Подключить amoCRM</button>` : ""}
+              ${!acc.amoScopeId ? `<button class="btn btn-secondary btn-sm" data-action="amocrm-connect">Подключить amoCRM</button>` : `<button class="btn btn-secondary btn-sm" data-action="ensure-source">Проверить источник amoCRM</button>`}
               ${acc.messenger === "telegram" && acc.state === "reconnect_required" ? `<button class="btn btn-primary btn-sm" data-action="reauthorize">Авторизовать заново</button>` : ""}
               <button class="btn btn-secondary btn-sm" data-action="reconnect">Reconnect</button>
               <button class="btn btn-danger btn-sm" data-action="disconnect">Disconnect</button>
@@ -298,15 +298,18 @@
         } else if (action === "reconnect") {
           await api(`/admin/accounts/${accountId}/reconnect`, { method: "POST" });
         } else if (action === "delete") {
-          if (!confirm("Delete this account and all its mappings? This cannot be undone.")) return;
+          if (!confirm("Удалить Telegram-аккаунт, его локальные переписки и ТОЛЬКО его источник amoCRM? Это необратимо. Другие интеграции не затрагиваются.")) return;
           await api(`/admin/accounts/${accountId}`, { method: "DELETE" });
           if (wizard.accountId === accountId) closeWizard();
         } else if (action === "reauthorize") {
           openWizard(accounts.find(a => a.id === accountId));
           return;
+        } else if (action === "ensure-source") {
+          const s = await api(`/admin/accounts/${accountId}/amocrm/source`, {method:"POST",body:"{}"});
+          alert(`Источник amoCRM проверен: ID ${s.amoSourceId}`);
         } else if (action === "amocrm-connect") {
           const r = await api(`/admin/accounts/${accountId}/amocrm/connect`, { method: "POST", body: "{}" });
-          alert(`amoCRM подключён. scope_id: ${r.scopeId}`);
+          alert(`amoCRM подключён. scope_id: ${r.scopeId}${r.source ? `\nИсточник: ${r.source.amoSourceId}` : ""}`);
         }
         await refresh();
       } catch (e) {
@@ -418,7 +421,7 @@
       if (!wizard.accountId) return;
       try {
         const r = await api(`/admin/accounts/${wizard.accountId}/amocrm/connect`, { method: "POST", body: "{}" });
-        alert(`amoCRM подключён. scope_id: ${r.scopeId}\n\nWebhook: ${bootstrap?.webhookUrlTemplate?.replace("{scope_id}", r.scopeId) || r.scopeId}`);
+        alert(`amoCRM подключён. scope_id: ${r.scopeId}\nИсточник: ${r.source?.amoSourceId ?? "не создан"}\nWebhook: ${bootstrap?.webhookUrlTemplate?.replace("{scope_id}", r.scopeId) || r.scopeId}`);
         await refresh();
       } catch (e) {
         alert(e.message);

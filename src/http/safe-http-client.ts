@@ -35,12 +35,24 @@ export class SafeHttpClient {
       throw new ReadOnlyViolationError(normalizedMethod, url);
     }
 
-    const response = await this.transport(url, {
-      ...init,
-      method: normalizedMethod,
-      headers: { ...this.defaultHeaders, ...init.headers },
-      signal:init.signal??AbortSignal.timeout(this.timeoutMs),
-    });
+    let response: Response;
+    for (let attempt = 0;; attempt++) {
+      try {
+        response = await this.transport(url, {
+          ...init,
+          method: normalizedMethod,
+          headers: { ...this.defaultHeaders, ...init.headers },
+          signal: init.signal ?? AbortSignal.timeout(this.timeoutMs),
+        });
+        break;
+      } catch (error) {
+        // Retry only idempotent reads; a failed POST may already have been accepted.
+        const retryable = error instanceof TypeError ||
+          (error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name));
+        if (normalizedMethod !== "GET" || init.signal || !retryable || attempt >= 2) throw error;
+        await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
+      }
+    }
     if (!response.ok) {
       const body = await response.text();
       throw new HttpError(response.status,normalizedMethod,url,parseRetryAfter(response.headers.get("retry-after")),safeResponseBody(body),response.headers.get("content-type")??undefined);

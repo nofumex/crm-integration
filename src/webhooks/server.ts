@@ -138,9 +138,17 @@ export function buildWebhookServer(o: Options): FastifyInstance {
     app.post("/admin/accounts/:accountId/reconnect", { preHandler: admin(o.adminToken) }, async (req) =>
       o.accountAdmin!.reconnect(String((req.params as any).accountId)),
     );
-    app.delete("/admin/accounts/:accountId", { preHandler: admin(o.adminToken) }, async (req) =>
-      o.accountAdmin!.delete(String((req.params as any).accountId)),
-    );
+    app.delete("/admin/accounts/:accountId", { preHandler: admin(o.adminToken) }, async (req, reply) => {
+      const accountId = String((req.params as any).accountId);
+      if (o.sourceReconciliation) {
+        if (o.sourceWritesEnabled) await o.sourceReconciliation.removeForAccount(accountId);
+        else {
+          const linked = (await o.sourceReconciliation.verify()).find(x => x.messengerAccountId === accountId);
+          if (linked?.amoSourceId) return reply.code(409).send({error:"Enable AMOCRM_SOURCES_WRITES_ENABLED to safely remove the linked amoCRM source before deleting this account"});
+        }
+      }
+      return o.accountAdmin!.delete(accountId);
+    });
   }
 
   if (o.qrOnboarding) {
@@ -209,12 +217,20 @@ export function buildWebhookServer(o: Options): FastifyInstance {
   }
 
   if (o.lifecycle) {
-    app.post("/admin/accounts/:accountId/amocrm/connect", { preHandler: admin(o.adminToken) }, async (req) =>
-      o.lifecycle!.connectAccount(String((req.params as any).accountId), (req.body as any)?.title),
-    );
+    app.post("/admin/accounts/:accountId/amocrm/connect", { preHandler: admin(o.adminToken) }, async (req) => {
+      const accountId = String((req.params as any).accountId);
+      const connected = await o.lifecycle!.connectAccount(accountId, (req.body as any)?.title);
+      if (!o.sourceWritesEnabled || !o.sourceReconciliation) return {...connected, sourceWarning: "amoCRM source creation is disabled"};
+      const source = await o.sourceReconciliation.ensureForAccount(accountId);
+      return {...connected, source};
+    });
   }
 
   if (o.sourceReconciliation) {
+    app.post("/admin/accounts/:accountId/amocrm/source", { preHandler: admin(o.adminToken) }, async (req, reply) => {
+      if (!o.sourceWritesEnabled) return reply.code(403).send({error:"amoCRM source writes are disabled"});
+      return o.sourceReconciliation!.ensureForAccount(String((req.params as any).accountId));
+    });
     app.get("/admin/amocrm/sources", { preHandler: admin(o.adminToken) }, async () => o.sourceReconciliation!.verify());
     app.post("/admin/amocrm/sources/reconcile", { preHandler: admin(o.adminToken) }, async (_req, reply) => {
       if (!o.sourceWritesEnabled) return reply.code(403).send({ error: "amoCRM source writes are disabled" });

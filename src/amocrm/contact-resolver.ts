@@ -19,8 +19,27 @@ export class ContactChatResolver {
   return {contactId:Number(contact.id),leadId:contact._embedded?.leads?.[0]?.id?Number(contact._embedded.leads[0].id):undefined,contact};
  }
  async createChatAndLink(account:MessengerAccount,providerConversationId:string,participant:NormalizedParticipant,contact:ResolvedContact):Promise<{amoConversationId:string;contactId:number}>{if(!account.amoScopeId)throw new Error(`Account ${account.id} has no amoCRM scope`);const response:any=await this.chats.createChat(account.amoScopeId,{conversation_id:providerConversationId,source:{external_id:account.sourceExternalId},user:chatUser(participant)});if(!response?.id)throw new Error("amoCRM create chat response has no id");await this.rest.linkChatToContact(contact.contactId,response.id);await this.enrich(contact,participant);return{amoConversationId:String(response.id),contactId:contact.contactId};}
- async enrich(contact:ResolvedContact|number,participant:NormalizedParticipant):Promise<void>{const contactId=typeof contact==="number"?contact:contact.contactId;const existing=typeof contact==="number"?await this.rest.getContact(contactId):contact.contact;await this.rest.patchContact(contactId,contactPatch(participant,existing,this.fields));}
+ async enrich(contact:ResolvedContact|number,participant:NormalizedParticipant):Promise<void>{const contactId=typeof contact==="number"?contact:contact.contactId;const existing=typeof contact==="number"?await this.rest.getContact(contactId):contact.contact;if(!existing)return;const patch=safeEnrichmentPatch(participant,existing,this.fields);if(Object.keys(patch).length)await this.rest.patchContact(contactId,patch);}
  async getLinkedLeadId(contactId:number):Promise<number|undefined>{const contact:any=await this.rest.getContact(contactId);const leadId=contact?._embedded?.leads?.[0]?.id;return leadId===undefined?undefined:Number(leadId);}
+}
+function safeEnrichmentPatch(participant:NormalizedParticipant,existing:any,fields:{telegramNameFieldId?:number;telegramUsernameFieldId?:number;telegramIdFieldId?:number}):Record<string,unknown>{
+ const patch:Record<string,unknown>={};const name=displayName(participant);
+ const existingName=String(existing.name??"").trim();
+ if(!existingName){
+   if(name)patch.name=name;
+   const first=participant.profile?.firstName,last=participant.profile?.lastName;
+   if(first&&!String(existing.first_name??"").trim())patch.first_name=first;
+   if(last&&!String(existing.last_name??"").trim())patch.last_name=last;
+ }
+ const custom:any[]=[];
+ const configured=[
+  {id:fields.telegramNameFieldId,value:name},
+  {id:fields.telegramUsernameFieldId,value:participant.username??participant.profile?.username},
+  {id:fields.telegramIdFieldId,value:participant.profile?.telegramId??participant.externalId}
+ ];
+ for(const f of configured){if(!f.id||!f.value)continue;const current=(existing.custom_fields_values??[]).find((x:any)=>Number(x.field_id)===f.id);if(!(current?.values??[]).some((v:any)=>String(v.value??"").trim()))custom.push({field_id:f.id,values:[{value:f.value}]});}
+ if(custom.length)patch.custom_fields_values=custom;
+ return patch;
 }
 function digits(v:string){return v.replace(/\D/g,"");}
 function phoneValues(contact:any){return(contact?.custom_fields_values??[]).filter((f:any)=>f.field_code==="PHONE").flatMap((f:any)=>f.values??[]);}

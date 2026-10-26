@@ -33,4 +33,4 @@ describe("amoCRM source reconciliation", () => {
   });
 });
 
-function account(id: string, displayName: string, sourceExternalId: string) { return { id, messenger: "telegram" as const, providerAccountId: id, displayName, credentialRef: `telegram:${id}`, amoAccountId: "17354872", sourceExternalId, config: {}, state: "connected" as const }; }
+function account(id: string, displayName: string, sourceExternalId: string) { return { id, messenger: "telegram" as const, providerAccountId: id, displayName, credentialRef: `telegram:${id}`, amoAccountId: "17354872", amoScopeId: "scope-connected", sourceExternalId, config: {}, state: "connected" as const }; }
