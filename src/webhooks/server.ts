@@ -6,7 +6,7 @@ import rateLimit from "@fastify/rate-limit";
 import { timingSafeEqual } from "node:crypto";
 import type { JobQueue } from "../queue/job-queue.js";
 import { verifyAmoWebhookSignature } from "../amocrm/chats-client.js";
-import type { TelegramOnboardingService } from "../runtime/telegram-onboarding.js";
+import type { TelegramOnboardingService } from "../runtime/telegram-onboarding.js";import type { TelegramQrOnboardingService } from "../runtime/qr-onboarding.js";
 import type { AccountManagementService } from "../runtime/account-management.js";
 import type { AccountAdminService } from "../runtime/account-admin.js";
 import type { AmoChatsLifecycle } from "../amocrm/lifecycle.js";
@@ -33,7 +33,7 @@ interface Options {
   queue: JobQueue;
   amoChannelSecret?: string;
   readiness?: () => Promise<{ ready: boolean; detail?: unknown }>;
-  onboarding?: TelegramOnboardingService;
+  onboarding?: TelegramOnboardingService;qrOnboarding?: TelegramQrOnboardingService;
   accountManagement?: AccountManagementService;
   accountAdmin?: AccountAdminService;
   lifecycle?: AmoChatsLifecycle;
@@ -143,6 +143,16 @@ export function buildWebhookServer(o: Options): FastifyInstance {
     );
   }
 
+  if (o.qrOnboarding) {
+    app.post("/admin/telegram/qr", { preHandler: admin(o.adminToken) }, async (req, reply) =>
+      reply.code(202).send(o.qrOnboarding!.start(req.body as any)));
+    app.get("/admin/telegram/qr/:id", { preHandler: admin(o.adminToken) }, async req =>
+      o.qrOnboarding!.status(String((req.params as any).id)));
+    app.post("/admin/telegram/qr/:id/password", { preHandler: admin(o.adminToken) }, async req =>
+      o.qrOnboarding!.password(String((req.params as any).id),String((req.body as any).password ?? "")));
+    app.post("/admin/telegram/qr/:id/cancel", { preHandler: admin(o.adminToken) }, async req =>
+      o.qrOnboarding!.cancel(String((req.params as any).id)));
+  }
   if (o.onboarding) {
     app.post("/admin/telegram/onboarding", { preHandler: admin(o.adminToken) }, async (req, reply) =>
       reply.code(202).send(await o.onboarding!.start(req.body as any)),

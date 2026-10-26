@@ -19,12 +19,14 @@
     "fastify": "^5.4.0",
     "pg": "^8.16.3",
     "pino": "^9.7.0",
+    "qrcode": "1.5.4",
     "teleproto": "^1.228.5",
     "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^22.15.30",
     "@types/pg": "^8.15.4",
+    "@types/qrcode": "1.5.5",
     "tsx": "^4.20.3",
     "typescript": "^5.8.3",
     "vitest": "^3.2.4"

@@ -127,9 +127,17 @@
         </div>
         <p class="account-meta">api_id и api_hash хранятся зашифрованно в PostgreSQL (SecretStore), не в .env.</p>
         <div class="actions">
-          <button class="btn btn-primary" id="w-start">Отправить код</button>
+          <button class="btn btn-primary" id="w-start">Отправить код</button><button class="btn btn-secondary" id="w-start-qr">Войти по QR-коду</button>
           <button class="btn btn-secondary" id="w-cancel">Отмена</button>
         </div>
+      </div>
+
+      <div id="step-qr" class="hidden">
+        <p>Открой Telegram на телефоне: Настройки → Устройства → Подключить устройство</p>
+        <div style="background:white;display:inline-block;padding:12px;border-radius:8px"><img id="w-qr-img" alt="QR для входа Telegram" width="280" height="280"></div>
+        <p id="w-qr-status" class="account-meta">Создаём QR-код...</p>
+        <div id="w-qr-2fa" class="hidden"><label>Пароль 2FA</label><input id="w-qr-password" type="password" autocomplete="off"><button class="btn btn-primary" id="w-qr-password-send">Подтвердить пароль</button></div>
+        <div class="actions"><button class="btn btn-secondary" id="w-qr-cancel">Отмена</button></div>
       </div>
 
       <div id="step-code" class="hidden">
@@ -168,7 +176,7 @@
     let token = sessionStorage.getItem(TOKEN_KEY) || "";
     let bootstrap = null;
     let accounts = [];
-    let wizard = { step: 1, accountId: null };
+    let wizard = { step: 1, accountId: null };let qrJob = null;let qrTimer = null;
 
     const $ = (id) => document.getElementById(id);
     const show = (el, v) => el.classList.toggle("hidden", !v);
@@ -314,7 +322,7 @@
         d.classList.toggle("done", s < n);
       });
       show($("step-phone"), n === 1);
-      show($("step-code"), n === 2);
+      show($("step-code"), n === 2);show($("step-qr"),n===5);
       show($("step-password"), n === 3);
       show($("step-done"), n === 4);
       show($("wizard-error"), false);
@@ -340,6 +348,28 @@
       setWizardStep(1);
       show($("wizard"), true);
     }
+
+    function stopQrTimer(){if(qrTimer){clearInterval(qrTimer);qrTimer=null;}}
+    async function cancelQr(){stopQrTimer();if(qrJob){const id=qrJob;qrJob=null;try{await api(`/admin/telegram/qr/${id}/cancel`,{method:'POST'});}catch(e){console.error(e);}}closeWizard();}
+    async function startQr(){
+      const amoAccountId=$('w-amo-id').value.trim();
+      if(!/^\d+$/.test(amoAccountId))throw new Error('Укажи amoCRM Account ID');
+      const r=await api('/admin/telegram/qr',{method:'POST',body:JSON.stringify({amoAccountId,displayName:$('w-display').value.trim()})});
+      qrJob=r.id;setWizardStep(5);$('w-qr-status').textContent='Создаём QR-код...';
+      stopQrTimer();qrTimer=setInterval(()=>{void pollQr();},1500);await pollQr();
+    }
+    async function pollQr(){
+      if(!qrJob)return;
+      try{
+        const r=await api(`/admin/telegram/qr/${qrJob}`);
+        if(r.state==='qr'){if(r.image && $('w-qr-img').src!==r.image)$('w-qr-img').src=r.image;
+          $('w-qr-status').textContent='Отсканируй QR-код телефоном. Он автоматически обновляется.';show($('w-qr-2fa'),false);}
+        else if(r.state==='password'){$('w-qr-status').textContent='Telegram запросил пароль 2FA';show($('w-qr-2fa'),true);}
+        else if(r.state==='connected'){stopQrTimer();wizard.accountId=r.accountId;qrJob=null;setWizardStep(4);await refresh();}
+        else if(r.state==='error'||r.state==='cancelled'){stopQrTimer();throw new Error(r.error||'QR-авторизация не удалась');}
+      }catch(e){stopQrTimer();$('wizard-error').textContent=e.message;show($('wizard-error'),true);}
+    }
+    async function submitQrPassword(){if(!qrJob)return;await api(`/admin/telegram/qr/${qrJob}/password`,{method:'POST',body:JSON.stringify({password:$('w-qr-password').value})});$('w-qr-status').textContent='Проверяем пароль...';}
 
     function closeWizard() {
       show($("wizard"), false);
@@ -421,6 +451,9 @@
     $("w-cancel").addEventListener("click", closeWizard);
     $("w-done").addEventListener("click", closeWizard);
     $("w-start").addEventListener("click", () => withWizardError(startOnboarding));
+    $("w-start-qr").addEventListener("click", () => withWizardError(startQr));
+    $("w-qr-cancel").addEventListener("click", () => withWizardError(cancelQr));
+    $("w-qr-password-send").addEventListener("click", () => withWizardError(submitQrPassword));
     $("w-submit-code").addEventListener("click", () => withWizardError(submitCode));
     $("w-resend-code").addEventListener("click", () => withWizardError(resendCode));
     $("w-submit-password").addEventListener("click", () => withWizardError(submitPassword));
