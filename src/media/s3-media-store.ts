@@ -39,7 +39,7 @@ export class S3MediaStore implements MediaStore {
   // Telegram must upload bytes itself. Giving Telegram our signed public URL makes
   // messages.SendMedia ask Telegram servers to fetch the webpage, which fails.
   // This buffer exists only in this worker invocation and is bounded by maxBytes.
-  return {...uploaded,uploadBytes:downloaded.data};
+  return {...uploaded,fileName:safeDeliveryFileName(input.fileName)??uploaded.fileName,uploadBytes:downloaded.data};
  }
  private checkToken(token:string):string {
   if(!this.options.publicTokenKey||token.length>1024)throw new Error('Invalid media token');
@@ -66,6 +66,13 @@ export class S3MediaStore implements MediaStore {
   const obj=await this.options.client.send(new HeadObjectCommand({Bucket:this.options.bucket,Key:key}));
   return {contentType:obj.ContentType??'application/octet-stream',contentLength:obj.ContentLength};
  }
+}
+// Preserve the human filename for Telegram, but never use it as a MinIO object key.
+function safeDeliveryFileName(name?:string):string|undefined {
+ if(!name)return undefined;
+ const basename=name.replace(/\\/g,'/').split('/').pop()?.replace(/[\u0000-\u001f\u007f]/g,'').trim();
+ if(!basename||basename==='.'||basename==='..')return undefined;
+ return Array.from(basename).slice(0,120).join('');
 }
 function sanitize(name:string){return name.replace(/[^a-zA-Z0-9._-]/g,'_').slice(-120)||'media.bin';}
 function validateMime(kind:AttachmentKind,mime?:string){if(!mime)return;const allowed:Record<AttachmentKind,string[]>={image:['image/'],video:['video/'],audio:['audio/'],voice:['audio/'],file:['application/','text/','image/','audio/','video/'],sticker:['image/','application/x-tgsticker'],unknown:['application/','text/','image/','audio/','video/']};if(!allowed[kind].some(p=>mime.startsWith(p)))throw new Error('Unexpected MIME type for '+kind);}
