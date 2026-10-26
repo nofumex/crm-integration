@@ -11,7 +11,7 @@ import type { SecretStore } from "../security/secret-store.js";
 import { getTelegramPeer,storeTelegramPeer } from "../runtime/telegram-peer-secrets.js";
 import { TelegramRecipientResolutionError } from "../core/errors.js";
 
-interface Options {store:MappingStore;accounts:AccountRepository;adapters:AdapterRegistry;chats:AmoCrmChatsClient;secrets:SecretStore;contactResolver?:ContactChatResolver;contactSyncEnabled?:boolean;mediaStore?:MediaStore;externalEchoDelayMs?:number;now?:()=>Date;logger?:{error(data:unknown,message?:string):void};}
+interface Options {store:MappingStore;accounts:AccountRepository;adapters:AdapterRegistry;chats:AmoCrmChatsClient;secrets:SecretStore;contactResolver?:ContactChatResolver;contactSyncEnabled?:boolean;mediaStore?:MediaStore;externalEchoDelayMs?:number;amoBotRefId?:string;now?:()=>Date;logger?:{error(data:unknown,message?:string):void};}
 
 export class MessageRouter {
  private readonly now:()=>Date;
@@ -52,11 +52,26 @@ export class MessageRouter {
     const id=parts.length===1?input.id:input.id+':'+i;
     if(await this.options.store.findMessageByMessengerId('telegram',account.id,id))continue;
     const payload=amoPayload({...input,sender:peer},id,parts[i],mapping,account.sourceExternalId) as any;
-    payload.payload.sender={id:'tg-self-'+account.id,name:account.displayName??'Telegram '+account.providerAccountId};
+    payload.payload.sender={id:'tg-self-'+account.id,name:account.displayName??'Telegram '+account.providerAccountId,
+      ...(this.options.amoBotRefId?{ref_id:this.options.amoBotRefId}:{})};
     payload.payload.receiver={id:peer.externalId,name:peer.displayName??peer.username??peer.externalId,
       ...(peer.phone?{profile:{phone:peer.phone}}:{}),...(peer.username?{profile_link:'https://t.me/'+peer.username.replace(/^@/,'')}: {})};
     payload.payload.silent=true;
-    const response:any=await this.options.chats.sendMessage(account.amoScopeId,payload);
+    let response:any;
+    try {
+      response=await this.options.chats.sendMessage(account.amoScopeId,payload);
+    } catch(error) {
+      // The Chats API 400 response identifies the actual invalid field. The HTTP
+      // client already redacts credentials from its responseBody. No request body
+      // (message text, phone, attachment URL) is logged here.
+      this.options.logger?.error({
+        accountId:account.id,telegramMessageId:id,
+        httpStatus:error instanceof HttpError?error.status:undefined,
+        responseBody:error instanceof HttpError?error.responseBody?.slice(0,1500):undefined,
+        botRefConfigured:Boolean(this.options.amoBotRefId),
+      },'External Telegram outgoing import failed in amoCRM Chats API');
+      throw error;
+    }
     const newConversation=amoResponseIds(response).conversationId;
     if(!mapping.amoConversationId&&newConversation)mapping.amoConversationId=newConversation;
     await this.options.store.saveMessage({messenger:'telegram',messengerAccountId:account.id,messengerMessageId:id,

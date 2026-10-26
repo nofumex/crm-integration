@@ -11,6 +11,8 @@ export interface NormalizedAttachment {
   fileName?: string;
   size?: number;
   caption?: string;
+  /** Only in memory during a CRM-to-Telegram send. Never put in durable jobs. */
+  uploadBytes?: Buffer;
 }
 
 export interface NormalizedParticipant {

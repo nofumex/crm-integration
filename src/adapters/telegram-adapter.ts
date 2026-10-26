@@ -108,7 +108,14 @@ export class TelegramAdapter implements MessengerAdapter {
     this.inFlightText.add(identity);
     try {
       const result=await withTimeout(attachment?.url
-        ? this.client.sendFile(recipient,{file:attachment.url,caption:command.text,...(command.replyToId?{replyTo:Number(command.replyToId)}:{})})
+        ? this.client.sendFile(recipient, {
+          file: attachment.uploadBytes
+            ? Object.assign(Buffer.from(attachment.uploadBytes),{name:attachment.fileName??'upload.bin'})
+            : attachment.url!,
+          forceDocument:attachment.kind==='file',
+          caption:command.text,
+          ...(command.replyToId ? {replyTo:Number(command.replyToId)} : {})
+        })
         : this.client.sendMessage(recipient,{message:command.text??'',...(command.replyToId?{replyTo:Number(command.replyToId)}:{})}),this.timeout());
       this.recentlySent.set(command.recipientId+':'+String((result as any).id),Date.now()+120000);
       return {externalMessageId:String((result as any).id),status:'sent',occurredAt:new Date(Number((result as any).date)*1000)};

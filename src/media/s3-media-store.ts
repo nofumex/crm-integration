@@ -35,7 +35,11 @@ export class S3MediaStore implements MediaStore {
  }
  async ingestRemote(input:{url:string;kind:AttachmentKind;mimeType?:string;fileName?:string;sourceId:string}) {
   const downloaded=await this.options.downloader.download(input.url);
-  return this.put({data:downloaded.data,kind:input.kind,mimeType:downloaded.mimeType??input.mimeType,fileName:input.fileName,sourceId:input.sourceId});
+  const uploaded=await this.put({data:downloaded.data,kind:input.kind,mimeType:downloaded.mimeType??input.mimeType,fileName:input.fileName,sourceId:input.sourceId});
+  // Telegram must upload bytes itself. Giving Telegram our signed public URL makes
+  // messages.SendMedia ask Telegram servers to fetch the webpage, which fails.
+  // This buffer exists only in this worker invocation and is bounded by maxBytes.
+  return {...uploaded,uploadBytes:downloaded.data};
  }
  private checkToken(token:string):string {
   if(!this.options.publicTokenKey||token.length>1024)throw new Error('Invalid media token');
